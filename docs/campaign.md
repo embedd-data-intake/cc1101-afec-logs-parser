@@ -60,7 +60,7 @@ The `cfg` keys are the firmware's (`mode`, `init`, `retries`, `ackto`, `tx`, `dg
    3. `run n=<packets> len=<len> interval=<interval>` on the sender, then wait for `block_end`. If `steps` are set, the interferer commands are sent when the sender's `app_tx` reaches each packet index.
    4. Interferer `off`.
 4. **After every block** `meta.json` is rewritten atomically, and a progress line with an ETA is printed.
-5. **At the end:** `stats` from both nodes into `meta.json`, then `metrics.py raw --out out --kw <kw> --condition <condition> [--exclude-blocks <failed>] [plan metrics args]`.
+5. **At the end:** `stats` from both nodes into `meta.json`, then `metrics.py raw --out out --kw <kw> --condition <condition> [--exclude-blocks <failed>] [plan metrics args]`. If that succeeds, `eda.py --campaign out --out figs` draws the per-cell figures.
 
 Block ids are assigned as the run goes (0, 1, 2, …) and are never reused, including across `--resume`. A block's `mark` therefore identifies it uniquely in both logs.
 

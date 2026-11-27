@@ -11,7 +11,7 @@ meta.json, and finally runs metrics.py.
     python campaign.py plans/Q.json --resume                 # continue an interrupted run
     python campaign.py plans/Q.json --blocks 1 --packets 12  # quick smoke run
 
-Output: <data>/<run_id>/raw/{sender,receiver[,interferer]}.log, meta.json, out/ (metrics.py).
+Output: <data>/<run_id>/raw/{sender,receiver[,interferer]}.log, meta.json, out/ (metrics.py), figs/ (eda.py).
 <data> defaults to ../data (the thesis repo's data/ when this runs inside the submodule).
 
 Plan file (JSON)
@@ -319,7 +319,14 @@ def run_metrics(run_dir: Path, plan: dict, failed: list[int]) -> None:
     if failed:
         cmd += ["--exclude-blocks", ",".join(map(str, failed))]
     print("[campaign] " + " ".join(cmd[1:]), file=sys.stderr)
-    subprocess.run(cmd)
+    if subprocess.run(cmd).returncode != 0:
+        return
+    figs = [sys.executable, str(HERE / "eda.py"), "--campaign", str(run_dir / "out"),
+            "--out", str(run_dir / "figs"), "--kw", str(plan["kw"])]
+    steps = plan.get("metrics", [])
+    if "--steps" in steps:
+        figs += ["--steps", steps[steps.index("--steps") + 1]]
+    subprocess.run(figs)
 
 
 def main() -> None:
