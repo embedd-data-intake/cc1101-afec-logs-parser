@@ -41,6 +41,9 @@ Plan file (JSON)
                       block (so a reboot can't leave it unconfigured) and must answer burst_ok; on/off
                       must answer intf_on/intf_off; an interferer reboot or burst_err fails the block.
                       Per block, meta.json gets the interferer's intf_off counters (bursts, air_ms, duty).
+    rssi_expect       optional [lo, hi] dBm: the median DATA RSSI the receiver logs in a block must lie in
+                      this range, or the block fails (geometry drifted: B lost its effect at +5 dB).
+                      The median is stored per block in meta.json either way (blocks[].rssi_median).
     metrics           optional extra metrics.py args, e.g. ["--steps", "0:Q,50:B,130:Q",
                                                           "--appropriate", "Q=0-1,B=3-5"]
     notes             free-form: geometry, distance, TX power rationale, environment
@@ -70,6 +73,7 @@ import random
 import re
 import signal
 import socket
+import statistics
 import subprocess
 import sys
 import threading
@@ -390,10 +394,19 @@ def run_block(nodes: dict[str, Node], plan: dict, cfg: str, block: int, intf: di
         if n.ser is None:     # untethered: a reboot only shows once the node is back on WiFi. Its `boot`
             c = n.send("hello")                       # precedes any later reply, so after this reply
             n.wait("hello", c, 30, boots[role])       # a reboot during the block has been counted
+    rssi = [e["rssi"] for e in r.since(first["receiver"], "rx") if e.get("type") == "DATA" and "rssi" in e]
+    rssi_med = statistics.median(rssi) if rssi else None
+    if (lim := plan.get("rssi_expect")) is not None:
+        lo, hi = lim
+        if rssi_med is None:
+            raise BlockFailed("receiver: no DATA frames logged, cannot check rssi_expect")
+        if not lo <= rssi_med <= hi:
+            raise BlockFailed(f"receiver: DATA RSSI median {rssi_med} dBm outside rssi_expect [{lo}, {hi}] "
+                              f"(geometry drifted?)")
     for role, n in nodes.items():                     # the receiver is never waited on during the run
         if drops := n.since(first[role], "log_drop"):
             raise BlockFailed(f"{role}: {sum(int(d.get('dropped', 0)) for d in drops)} log lines dropped (MQTT)")
-    return {"run_start": start, "block_end": end, "cfg_ok": applied,
+    return {"run_start": start, "block_end": end, "cfg_ok": applied, "rssi_median": rssi_med,
             "interferer": {k: intf_res[k] for k in ("bursts", "skipped", "errors", "air_ms", "span_ms",
                                                     "duty_permille", "seed") if k in intf_res}}
 
@@ -601,7 +614,7 @@ def main() -> None:
                     res = run_block(nodes, plan, cfg, block, plan.get("interferer"))
                     e = res["block_end"]
                     rec.update(status="ok", ok=e["ok"], no_ack=e["no_ack"], duty_limit=e["duty_limit"],
-                               dur_ms=e["dur_ms"])
+                               dur_ms=e["dur_ms"], rssi_median=res["rssi_median"])
                     if res["interferer"]:
                         rec["interferer"] = res["interferer"]
                     if not meta.get("cfg_ok", {}).get(cfg):
@@ -624,6 +637,7 @@ def main() -> None:
             eta = el / (n_done + 1) * (len(todo) - n_done - 1) / 60
             print(f"[campaign] {n_done + 1}/{len(todo)} block {rec['block']} {cfg}: "
                   f"ok {rec['ok']}/{plan['packets']} no_ack {rec['no_ack']} duty {rec['duty_limit']} "
+                  f"rssi {rec['rssi_median']} "
                   f"| ETA {eta:.0f} min", file=sys.stderr)
         meta["status"] = "done"
     except KeyboardInterrupt:

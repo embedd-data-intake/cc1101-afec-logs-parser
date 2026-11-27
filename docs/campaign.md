@@ -49,7 +49,8 @@ Freeze `retries`, `ackto`, `dg` and the C4 policy (`rssi_*`, `hys`) from the pil
 | `sender`, `receiver` | `{"tx": -30}` | Optional per-node overrides, e.g. the M TX power |
 | `ports` | `{"sender": "/dev/cu.usbserial-5", "receiver": "/dev/cu.usbserial-0001"}` | Serial ports |
 | `interferer` | see below | Optional |
-| `metrics` | `["--steps", "0:Q,50:B,130:Q", "--appropriate", "Q=0-1,B=3-5"]` | Extra `metrics.py` arguments |
+| `rssi_expect` | `[-51, -46]` | Optional. The median DATA RSSI the receiver logs in a block must lie in `[lo, hi]` dBm, or the block fails (and is retried; if the geometry has drifted the retries fail too and the run stops). The median is stored as `blocks[].rssi_median` either way. Added 2026-11-27 after the P3-B sweep, where 5 dB of drift removed the B effect. |
+| `metrics` | `["--steps", "0:Q,50:B,130:Q", "--appropriate", "Q=0,B=5"]` | Extra `metrics.py` arguments |
 | `notes` | `{"geometry": "..."}` | Free-form: geometry, distance, TX power rationale, environment. Copied into `meta.json`. |
 
 The `cfg` keys are the firmware's (`mode`, `init`, `retries`, `ackto`, `tx`, `dg`, `nackstep`, `rssi_min`, `rssi_max`, `rssi_up`, `hys`). The order of precedence is `common` < `configs[Cx]` < `sender`/`receiver`.
@@ -105,7 +106,8 @@ A block **fails** when:
 - `run_start` or `cfg_ok` doesn't arrive in time;
 - (MQTT) a node logs `log_drop` during the block;
 - the interferer reboots, logs `burst_err` or `cmd_err`, doesn't answer `burst_ok` / `intf_on` / `intf_off`, or (S) never acknowledges a step `on`;
-- the block takes longer than `packets × max(interval, (1 + retries) × (ackto + 150 ms)) + 30 s`.
+- the block takes longer than `packets × max(interval, (1 + retries) × (ackto + 150 ms)) + 30 s`;
+- (`rssi_expect`) the block's median DATA RSSI at the receiver is outside the range, or no DATA frame was logged. Tested on the bench 2026-11-27 (fail at −43 dBm against [−51, −46], pass with a wide range).
 
 If a block fails after `run_start`, the sender gets `stop` and the orchestrator waits up to 5 s for its `block_end aborted=1`. Otherwise the sender would still be mid-run (e.g. after a receiver reboot) and the retry's `cfg` would get `cmd_err busy`. After a sender reboot, the `stop` just gets `cmd_err no run active`, which is ignored.
 
@@ -127,7 +129,7 @@ A failed block is recorded (`status: failed`, `error`) and re-run under a fresh 
 | `firmware` | `{commit, dirty}` for the lib, sender, receiver, interferer, parser and thesis repos at run start. **Commit everything before a real run**, so that `dirty` is false. |
 | `radio` | Frequency, sync word, bitrate, whitening, HW CRC (fixed in `config.h`) |
 | `sessions[]` | One per start or resume: time, `logs` (transport, URI), the `hello` of each node (port, node id, build timestamp, `sink`), firmware commits; with MQTT also `log_stats` and `mqtt` (see "Log transport") |
-| `blocks[]` | `sched_idx`, `block`, `cfg`, `attempt`, `started`, `ended`, `status` (`ok`, `failed`, `interrupted`), and for `ok`: `ok`, `no_ack`, `duty_limit`, `dur_ms` from `block_end`, plus `interferer` (`bursts`, `skipped`, `errors`, `air_ms`, `span_ms`, `duty_permille` from `intf_off`) when it was used; for failures, `error` |
+| `blocks[]` | `sched_idx`, `block`, `cfg`, `attempt`, `started`, `ended`, `status` (`ok`, `failed`, `interrupted`), and for `ok`: `ok`, `no_ack`, `duty_limit`, `dur_ms` from `block_end`, `rssi_median` (receiver DATA RSSI), plus `interferer` (`bursts`, `skipped`, `errors`, `air_ms`, `span_ms`, `duty_permille` from `intf_off`) when it was used; for failures, `error` |
 | `cfg_ok` | The first `cfg_ok` of each node per configuration: the effective configuration as the nodes reported it |
 | `final_stats` | `stats` of both nodes (and the interferer) at the end (cumulative since boot) |
 
