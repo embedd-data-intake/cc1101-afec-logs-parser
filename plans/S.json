@@ -22,8 +22,8 @@
     "C4": {
       "mode": 4,
       "rssi_min": -110,
-      "rssi_max": -50,
-      "rssi_up": "11,9,7,5,3",
+      "rssi_max": -95,
+      "rssi_up": "14,13,12,11,10",
       "hys": 1
     },
     "C5": {
@@ -64,6 +64,7 @@
   },
   "notes": {
     "status": "TEMPLATE: interferer firmware done (T7/T8); burst settings come from the B pilot (C3), --appropriate from P3",
-    "steps": "Q until packet 50, B 50-129, Q from 130"
+    "steps": "Q until packet 50, B 50-129, Q from 130",
+    "c4_policy": "frozen 2026-11-27 (PLAN C4): 1 dB/q over [-110,-95] dBm; level 0 at >= -95, 1-4 across -99..-96, 5 at <= -100 (the measured onset of uncoded loss). Validated in M: data/2026-11-27-2048-cal-C4-M"
   }
 }

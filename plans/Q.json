@@ -25,8 +25,8 @@
     "C4": {
       "mode": 4,
       "rssi_min": -110,
-      "rssi_max": -50,
-      "rssi_up": "11,9,7,5,3",
+      "rssi_max": -95,
+      "rssi_up": "14,13,12,11,10",
       "hys": 1
     },
     "C5": {
@@ -43,6 +43,7 @@
   },
   "notes": {
     "geometry": "bench, nodes 1-2 m apart, 0 dBm",
-    "frozen": "set retries/ackto/dg and the C4 policy from the pilot before running"
+    "frozen": "set retries/ackto/dg and the C4 policy from the pilot before running",
+    "c4_policy": "frozen 2026-11-27 (PLAN C4): 1 dB/q over [-110,-95] dBm; level 0 at >= -95, 1-4 across -99..-96, 5 at <= -100 (the measured onset of uncoded loss). Validated in M: data/2026-11-27-2048-cal-C4-M"
   }
 }
