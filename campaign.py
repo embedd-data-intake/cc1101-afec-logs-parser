@@ -2,7 +2,7 @@
 """
 campaign.py - measurement-campaign orchestrator (run plan P0.3).
 
-Drives the sender and receiver (and, later, the interferer) over their serial command layer,
+Drives the sender and receiver (and, for B and S, the interferer) over their serial command layer,
 runs the blocks of one phase in a seeded randomised order, captures the raw logs, writes
 meta.json, and finally runs metrics.py.
 
@@ -33,6 +33,10 @@ Plan file (JSON)
     interferer        optional: {"port": "...", "setup": ["burst len=10 period=200 jitter=80"],
                                  "during_block": true,            # "on" before run, "off" after
                                  "steps": [[50, "on"], [130, "off"]]}   # or: at packet idx
+                      Firmware: ../cc1101-afec-interferer (serial only). `setup` is re-sent before every
+                      block (so a reboot can't leave it unconfigured) and must answer burst_ok; on/off
+                      must answer intf_on/intf_off; an interferer reboot or burst_err fails the block.
+                      Per block, meta.json gets the interferer's intf_off counters (bursts, air_ms, duty).
     metrics           optional extra metrics.py args, e.g. ["--steps", "0:Q,50:B,130:Q",
                                                           "--appropriate", "Q=0-1,B=3-5"]
     notes             free-form: geometry, distance, TX power rationale, environment
@@ -270,7 +274,7 @@ def git_info(path: Path) -> dict:
 
 def provenance() -> dict:
     subs = {"lib": "cc1101-afec", "sender": "cc1101-afec-sender", "receiver": "cc1101-afec-receive",
-            "parser": "cc1101-afec-logs-parser", "thesis": "."}
+            "interferer": "cc1101-afec-interferer", "parser": "cc1101-afec-logs-parser", "thesis": "."}
     return {k: git_info(REPO / v) for k, v in subs.items() if (REPO / v).exists()}
 
 
@@ -312,9 +316,17 @@ def run_block(nodes: dict[str, Node], plan: dict, cfg: str, block: int, intf: di
         n.wait("mark", c, 3, boots[role], block=block)
 
     i = nodes.get("interferer")
+    if i:
+        if i.boots > boots["interferer"]:
+            raise BlockFailed("interferer: node rebooted")
+        for cmd in (intf or {}).get("setup", []):     # off here (every block ends with off)
+            c = i.send(cmd)
+            i.wait("burst_ok", c, 3, boots["interferer"])
     if i and intf and intf.get("during_block"):
-        i.send("on")
+        c = i.send("on")
+        i.wait("intf_on", c, 3, boots["interferer"])
     steps = sorted((intf or {}).get("steps", []))
+    intf_res: dict = {}
     retries = int(applied["sender"].get("retries", 3))
     ackto = int(applied["sender"].get("ack_to_ms", 400))
     worst_ms = max(plan["interval"], (1 + retries) * (ackto + 150))
@@ -349,7 +361,21 @@ def run_block(nodes: dict[str, Node], plan: dict, cfg: str, block: int, intf: di
         raise
     finally:
         if i and intf and (intf.get("during_block") or steps):
-            i.send("off")
+            c = i.send("off")
+            try:
+                intf_res = i.wait("intf_off", c, 3, boots["interferer"])
+            except BlockFailed:
+                pass                     # reported below (reboot / missing reply)
+    if i:
+        if i.boots > boots["interferer"]:
+            raise BlockFailed("interferer: node rebooted")
+        if errs := i.since(first["interferer"], "burst_err") + i.since(first["interferer"], "cmd_err"):
+            raise BlockFailed(f"interferer: {errs[0].get('ev')} {errs[0].get('err')}")
+        if intf and (intf.get("during_block") or steps):
+            if not intf_res:
+                raise BlockFailed("interferer: no intf_off reply")
+            if steps and len(i.since(first["interferer"], "intf_on")) == 0:
+                raise BlockFailed("interferer: step 'on' never acknowledged")
     if end.get("aborted"):
         raise BlockFailed("sender: block aborted")
     for role in ("sender", "receiver"):
@@ -360,7 +386,9 @@ def run_block(nodes: dict[str, Node], plan: dict, cfg: str, block: int, intf: di
     for role, n in nodes.items():                     # the receiver is never waited on during the run
         if drops := n.since(first[role], "log_drop"):
             raise BlockFailed(f"{role}: {sum(int(d.get('dropped', 0)) for d in drops)} log lines dropped (MQTT)")
-    return {"run_start": start, "block_end": end, "cfg_ok": applied}
+    return {"run_start": start, "block_end": end, "cfg_ok": applied,
+            "interferer": {k: intf_res[k] for k in ("bursts", "skipped", "errors", "air_ms", "span_ms",
+                                                    "duty_permille", "seed") if k in intf_res}}
 
 
 def log_transport(plan: dict) -> dict:
@@ -430,6 +458,15 @@ def handshake(nodes: dict[str, Node], mqtt: bool) -> dict:
         if mqtt and "mqtt" not in sink:
             sys.exit(f"{role}: firmware log sink is {sink!r}, the plan wants mqtt")
         info[role] = {"port": n.port or "mqtt", "node": h.get("node"), "build": h.get("build"), "sink": sink}
+    if (n := nodes.get("interferer")) is not None:
+        c = n.send("hello")
+        try:
+            h = n.wait("hello", c, 5)
+        except BlockFailed:
+            sys.exit(f"interferer: no hello on {n.port}. Is it flashed with cc1101-afec-interferer?")
+        if h.get("role") != "interferer":
+            sys.exit(f"{n.port} answered as {h.get('role')!r}, expected interferer: check interferer.port")
+        info["interferer"] = {"port": n.port, "node": h.get("node"), "build": h.get("build"), "sink": "serial"}
     return info
 
 
@@ -513,9 +550,6 @@ def main() -> None:
         session = {"started": now(), "logs": logs, "firmware": provenance()}
         meta["sessions"].append(session)
         session["nodes"] = handshake(nodes, mqtt)
-        if nodes.get("interferer"):
-            for cmd in plan["interferer"].get("setup", []):
-                nodes["interferer"].send(cmd)
         write_meta(meta_path, meta)
         t_start = time.monotonic()
         todo = [k for k in range(len(sched)) if k not in done]
@@ -530,6 +564,8 @@ def main() -> None:
                     e = res["block_end"]
                     rec.update(status="ok", ok=e["ok"], no_ack=e["no_ack"], duty_limit=e["duty_limit"],
                                dur_ms=e["dur_ms"])
+                    if res["interferer"]:
+                        rec["interferer"] = res["interferer"]
                     if not meta.get("cfg_ok", {}).get(cfg):
                         meta.setdefault("cfg_ok", {})[cfg] = res["cfg_ok"]
                 except BlockFailed as ex:
@@ -554,6 +590,8 @@ def main() -> None:
         meta["status"] = "done"
     except KeyboardInterrupt:
         nodes["sender"].send("stop")
+        if nodes.get("interferer"):
+            nodes["interferer"].send("off")
         if current is not None:                        # record it, so its block id is never reused
             current.update(status="interrupted", ended=now())
             meta["blocks"].append(current)
@@ -570,6 +608,13 @@ def main() -> None:
                     if ls.get("dropped"):
                         print(f"[campaign] WARNING {role}: {ls['dropped']} log lines dropped this boot",
                               file=sys.stderr)
+            except BlockFailed as ex:
+                print(f"[campaign] final stats: {ex}", file=sys.stderr)
+        if (n := nodes.get("interferer")) is not None:
+            try:
+                n.send("off")
+                c = n.send("stats")
+                meta.setdefault("final_stats", {})["interferer"] = n.wait("stats", c, 3)
             except BlockFailed as ex:
                 print(f"[campaign] final stats: {ex}", file=sys.stderr)
         if mqtt:

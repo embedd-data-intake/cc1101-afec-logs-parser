@@ -35,7 +35,7 @@
     "receiver": "/dev/cu.usbserial-0001"
   },
   "interferer": {
-    "port": "FILL IN",
+    "port": "/dev/cu.usbserial-210",
     "setup": [
       "burst len=10 period=200 jitter=80"
     ],
@@ -63,7 +63,7 @@
     "uri": "mqtt://localhost:1883"
   },
   "notes": {
-    "status": "TEMPLATE: needs the interferer firmware (P0.2); --appropriate comes from P3",
+    "status": "TEMPLATE: interferer firmware done (T7/T8); burst settings come from the B pilot (C3), --appropriate from P3",
     "steps": "Q until packet 50, B 50-129, Q from 130"
   }
 }

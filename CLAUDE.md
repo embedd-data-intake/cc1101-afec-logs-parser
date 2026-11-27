@@ -9,7 +9,7 @@ This is the host-side tooling for the AFEC thesis measurement campaign: the orch
 - `parse.py`: JSON lines → DataFrame or CSV, the `mark` block context and the clock sync. `metrics.py` imports `load_files` from it. See `docs/parse-and-eda.md`.
 - `mqtt_logs.py`: reads the nodes' log lines from an MQTT broker (`afec/<run_id>/<tx|rx>/log`). Used by `campaign.py --mqtt` and `parse.py --mode mqtt`. See "Log transport" in `docs/campaign.md`.
 - `eda.py`: per-cell campaign figures from `metrics.py` output (`--campaign`), and a single-node diagnostic from `events.csv`.
-- `plans/`: phase plans. `pilot-Q`, `Q` and `M` (whose TX power and geometry are still placeholders), and the `S` template, which needs the interferer.
+- `plans/`: phase plans. `pilot-Q`, `Q` and `M` (whose TX power and geometry are still placeholders), and the `S` template (interferer on `/dev/cu.usbserial-210`, firmware in `../cc1101-afec-interferer`; still needs P3's appropriate levels).
 
 ## Commands
 

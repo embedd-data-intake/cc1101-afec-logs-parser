@@ -49,7 +49,7 @@ data/<run_id>/            e.g. 2026-11-30-Q, 2026-11-28-pilot-Q
   meta.json               plan, schedule + seed, git commits, node builds, per-block results, final stats
   raw/sender.log          everything the node printed, untouched (non-JSON boot lines included)
   raw/receiver.log
-  raw/interferer.log      once the interferer exists
+  raw/interferer.log      B and S (node 3, ../cc1101-afec-interferer)
   out/                    metrics.py output
 ```
 

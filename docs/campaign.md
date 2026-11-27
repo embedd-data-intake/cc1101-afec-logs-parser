@@ -28,7 +28,7 @@ Runs one campaign **phase** (one operating condition) from a JSON plan: all bloc
 | `pilot-Q.json` | P1 pilot in Q: C2, C4, C5 × 3 blocks × 60 packets, ~20 min |
 | `Q.json` | Main Q phase: C1, C2, C4, C5 × 18 blocks × 110 packets, ~4.6 h |
 | `M.json` | Main M phase. **TX power and geometry are placeholders**: fill in after the M calibration. |
-| `S.json` | **Template.** Needs the interferer firmware (P0.2) and the appropriate levels from P3. |
+| `S.json` | **Template.** Interferer port filled in (`/dev/cu.usbserial-210`); still needs the appropriate levels from P3 and the burst settings from the B pilot. |
 
 Freeze `retries`, `ackto`, `dg` and the C4 policy (`rssi_*`, `hys`) from the pilot and P2 before any main phase, and keep them identical across Q, M, B and S.
 
@@ -83,15 +83,15 @@ With MQTT (`mqtt_logs.py`, paho-mqtt):
 
 ## What a run does
 
-1. **Open both ports.** On the CP2102 boards this resets the ESP32s. Wait 2.5 s, send `hello` to each and check `role`. Swapped ports stop the run with a message.
+1. **Open both ports** (three with an interferer). On the CP2102 boards this resets the ESP32s. Wait 2.5 s, send `hello` to each and check `role` (`sender`, `receiver`, `interferer`). Swapped ports stop the run with a message.
 2. **Schedule: permuted rounds.** For each of `blocks_per_config` rounds, the configuration list is shuffled with `random.Random(seed)`, so every round contains each configuration once. This spreads slow drift (ambient noise, temperature) evenly over the configurations.
 3. **Per block:**
    1. Receiver first, then sender: `cfg …`, wait for `cfg_ok` and check that its `cfg` and every requested field match; then `mark run=<run_id> block=<n> cfg=<Cx>`. The firmware's `cfg` already re-initialises the radio and node and resets the link, so no separate `reset` is sent.
-   2. Interferer `on` (if `during_block`).
+   2. Interferer: each `setup` line (wait for `burst_ok`), then `on` if `during_block` (wait for `intf_on`).
    3. `run n=<packets> len=<len> interval=<interval>` on the sender, then wait for `block_end`. If `steps` are set, the interferer commands are sent when the sender's `app_tx` reaches each packet index.
-   4. Interferer `off`.
+   4. Interferer `off` (wait for `intf_off`; its counters go into the block's `interferer` record).
 4. **After every block** `meta.json` is rewritten atomically, and a progress line with an ETA is printed.
-5. **At the end:** `stats` from both nodes into `meta.json`, then `metrics.py raw --out out --kw <kw> --condition <condition> [--exclude-blocks <failed>] [plan metrics args]`. If that succeeds, `eda.py --campaign out --out figs` draws the per-cell figures.
+5. **At the end:** `stats` from both nodes (and the interferer, after an `off`) into `meta.json`, then `metrics.py raw --out out --kw <kw> --condition <condition> [--exclude-blocks <failed>] [plan metrics args]`. If that succeeds, `eda.py --campaign out --out figs` draws the per-cell figures.
 
 Block ids are assigned as the run goes (0, 1, 2, …) and are never reused, including across `--resume`. A block's `mark` therefore identifies it uniquely in both logs.
 
@@ -103,6 +103,7 @@ A block **fails** when:
 - a node reboots (a new `CC1101 ready` line, or untethered a `boot` event);
 - `run_start` or `cfg_ok` doesn't arrive in time;
 - (MQTT) a node logs `log_drop` during the block;
+- the interferer reboots, logs `burst_err` or `cmd_err`, doesn't answer `burst_ok` / `intf_on` / `intf_off`, or (S) never acknowledges a step `on`;
 - the block takes longer than `packets × max(interval, (1 + retries) × (ackto + 150 ms)) + 30 s`.
 
 If a block fails after `run_start`, the sender gets `stop` and the orchestrator waits up to 5 s for its `block_end aborted=1`. Otherwise the sender would still be mid-run (e.g. after a receiver reboot) and the retry's `cfg` would get `cmd_err busy`. After a sender reboot, the `stop` just gets `cmd_err no run active`, which is ignored.
@@ -113,7 +114,7 @@ A failed block is recorded (`status: failed`, `error`) and re-run under a fresh 
 
 **Ctrl-C or SIGTERM:** the sender gets `stop`, the block in progress is recorded as `interrupted` (so its id is never reused), `meta.json` gets `status: interrupted`, and the ports are closed. `--resume` reopens the ports, which reboots the nodes, appends to the raw logs and continues with the next schedule entry that isn't `ok`.
 
-**Tested on the bench (2026-11-27):** a normal run, interrupt + resume, and reboot detection (T9, serial): a sender reset and a receiver reset mid-block, each giving a failed block, then a clean retry. The receiver case found the `busy` bug above (fixed the same day). To reset a board during a run without the button, pulse RTS (the board's EN) from a second handle on its port. Untethered reboot detection over MQTT (C8 smoke, same day): the `boot` event arrives once the node is back on WiFi (a few seconds), fails the block and the sender is stopped. **Not yet tested:** everything involving the interferer.
+**Tested on the bench (2026-11-27):** a normal run, interrupt + resume, and reboot detection (T9, serial): a sender reset and a receiver reset mid-block, each giving a failed block, then a clean retry. The receiver case found the `busy` bug above (fixed the same day). To reset a board during a run without the button, pulse RTS (the board's EN) from a second handle on its port. Untethered reboot detection over MQTT (C8 smoke, same day): the `boot` event arrives once the node is back on WiFi (a few seconds), fails the block and the sender is stopped. Interferer hooks: tested 2026-11-27 (T8), see "Interferer hooks".
 
 ## meta.json
 
@@ -122,14 +123,14 @@ A failed block is recorded (`status: failed`, `error`) and re-run under a fresh 
 | `run_id`, `condition`, `created`, `ended`, `host`, `status` | `status` is `running`, `done` or `interrupted` |
 | `plan`, `plan_file` | The full plan after CLI overrides |
 | `schedule`, `schedule_rule` | Configuration per schedule index |
-| `firmware` | `{commit, dirty}` for the lib, sender, receiver, parser and thesis repos at run start. **Commit everything before a real run**, so that `dirty` is false. |
+| `firmware` | `{commit, dirty}` for the lib, sender, receiver, interferer, parser and thesis repos at run start. **Commit everything before a real run**, so that `dirty` is false. |
 | `radio` | Frequency, sync word, bitrate, whitening, HW CRC (fixed in `config.h`) |
 | `sessions[]` | One per start or resume: time, `logs` (transport, URI), the `hello` of each node (port, node id, build timestamp, `sink`), firmware commits; with MQTT also `log_stats` and `mqtt` (see "Log transport") |
-| `blocks[]` | `sched_idx`, `block`, `cfg`, `attempt`, `started`, `ended`, `status` (`ok`, `failed`, `interrupted`), and for `ok`: `ok`, `no_ack`, `duty_limit`, `dur_ms` from `block_end`; for failures, `error` |
+| `blocks[]` | `sched_idx`, `block`, `cfg`, `attempt`, `started`, `ended`, `status` (`ok`, `failed`, `interrupted`), and for `ok`: `ok`, `no_ack`, `duty_limit`, `dur_ms` from `block_end`, plus `interferer` (`bursts`, `skipped`, `errors`, `air_ms`, `span_ms`, `duty_permille` from `intf_off`) when it was used; for failures, `error` |
 | `cfg_ok` | The first `cfg_ok` of each node per configuration: the effective configuration as the nodes reported it |
-| `final_stats` | `stats` of both nodes at the end (cumulative since boot) |
+| `final_stats` | `stats` of both nodes (and the interferer) at the end (cumulative since boot) |
 
-## Interferer hooks (untested; for P0.2)
+## Interferer hooks
 
 ```json
 "interferer": {"port": "/dev/cu.usbserial-X",
@@ -138,10 +139,16 @@ A failed block is recorded (`status: failed`, `error`) and re-run under a fresh 
                "steps": [[50, "on"], [130, "off"]]}
 ```
 
-- `setup` lines are sent once after the handshake.
+Firmware: `../cc1101-afec-interferer` (`docs/firmware.md` there), serial only, also with an MQTT plan.
+
+- `setup` lines are sent **before every block**, while the interferer is off, and each must answer `burst_ok`. A reboot therefore can't leave it unconfigured, and with no `seed` each block gets a fresh one (logged in `burst_ok`).
 - `during_block` (B): `on` before `run` and `off` after it.
 - `steps` (S): each command is sent when the sender has logged `app_tx` for packet `idx + 1 ≥ step`, so the switch lands between two packets. Polling adds up to ~0.2 s of latency, which is far below the 2 s interval.
-- The interferer log goes to `raw/interferer.log`. Its port is not `hello`-checked and its git commit is not yet recorded in `meta.json`. Add both once the firmware exists.
+- After the block the orchestrator always sends `off` (idempotent) and stores the `intf_off` counters in `blocks[].interferer`. With `steps` these are the counters since the step `on`, and `span_ms` runs to the end of the block, so `duty_permille` there is diluted; use `bursts` and `air_ms`.
+- The interferer log goes to `raw/interferer.log`. `metrics.py` reads it along with the others; `parse.py --sync` can't link node 3 (it sends no frames) and warns, leaving its offset at 0.
+- Ctrl-C sends `off` too. An interferer reboot (`CC1101 ready` line) fails the block.
+
+**Tested on the bench (2026-11-27, T8)** with the dev-mqtt sender/receiver: a B-style run (`during_block`, C2 + C5, 40 packets each; 10 dBm, `len=10 period=100 jitter=40`): C2 32/40, C5 39/40 (levels 4–5), interferer 10.0 % duty, 0 skipped; and an S-style block (C5, 60 packets, steps at 20 and 40): level 0 → 4–5 within 1–2 packets of `on`, back to 0 after `off`, `metrics.py` and `eda.py --steps` ran clean. Interferer reboot mid-block not yet exercised.
 
 ## Timing
 
