@@ -62,6 +62,8 @@ Added 2026-11-27 (PLAN M6). **Commands always go over serial.** Where the JSON e
 | absent or `{"transport": "serial"}` | `1` serial (`env:dev`) or `3` both | the serial port, as before |
 | `{"transport": "mqtt", "uri": "mqtt://host:1883"}` or `--mqtt URI` | `2` mqtt (`env:dev-mqtt`) or `3` both | the broker, topics `afec/<run_id>/<tx\|rx>/log` |
 
+**Broker:** `docker compose up -d` in the thesis repo root starts Mosquitto on port 1883 (`docker-compose.yml`, `mosquitto/mosquitto.conf`: anonymous, no persistence, connect/disconnect logging). The host uses `mqtt://localhost:1883`; the nodes' `secrets.h` needs the Mac's LAN address.
+
 With MQTT (`mqtt_logs.py`, paho-mqtt):
 - **The broker connection is made before the ports are opened** (opening a port resets the board), so the boot lines are captured. An unreachable broker stops the run before any board is touched.
 - **The raw logs keep their layout.** `raw/<role>.log` gets every MQTT line in arrival order plus the plain-text serial lines (`CC1101 ready`, used for reboot detection). `metrics.py` reads it unchanged. JSON lines that also arrive on serial (sink 3) go to `raw/<role>-serial.txt`, which `metrics.py` doesn't read, so nothing is counted twice.
