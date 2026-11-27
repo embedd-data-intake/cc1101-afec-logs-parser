@@ -6,7 +6,7 @@ Host-side tooling for the AFEC thesis measurement campaign. It drives the two no
 | --- | --- |
 | [campaign.md](campaign.md) | `campaign.py`: running a phase, the plan file format, `meta.json`, failure handling, resume, the interferer hooks |
 | [metrics.md](metrics.md) | `metrics.py`: every output table and column, metric definitions, how sender and receiver events are joined, known approximations |
-| [parse-and-eda.md](parse-and-eda.md) | `parse.py` (logs → `events.csv`, block context, clock sync) and `eda.py` (single-node plots) |
+| [parse-and-eda.md](parse-and-eda.md) | `parse.py` (logs → `events.csv`, block context, clock sync) and `eda.py` (per-cell campaign figures, single-node diagnostic) |
 
 ## Pipeline
 
@@ -24,6 +24,7 @@ Host-side tooling for the AFEC thesis measurement campaign. It drives the two no
  out/packets.csv, blocks.csv, cells.csv, attempts.csv, [tconv.csv], [bench.csv]
 
  parse.py --mode file ... → out/events.csv, by_event/*.csv   (generic event tables)
+ eda.py --campaign out/   → cells_*.png, blocks.png, levels_trace.png, [tconv.png]  (per-cell figures)
  eda.py events.csv        → eda_overview.png / eda_receiver.png  (one node, quick look)
 ```
 

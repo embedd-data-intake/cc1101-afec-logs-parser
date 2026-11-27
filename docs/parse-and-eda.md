@@ -40,9 +40,37 @@ The two directions are averaged. The lowest node id is the reference. The offset
 
 **Serial mode.** Reads with pyserial, tees the raw capture to `--raw-log`, and stops after `--duration` s, `--max-lines` lines or Ctrl-C. `--sync` doesn't work here (a single port). For campaign runs use `campaign.py`, which captures both nodes.
 
-## eda.py — quick single-node look
+## eda.py — plots
 
-A diagnostic for one node's `events.csv`. It predates the command layer and looks at library events only, not `mark`, `app_tx` or `app_rx`. Use it for debugging a link, not for campaign results.
+Two views: **campaign figures** from `metrics.py` output, and a **single-node diagnostic** from `events.csv`.
+
+### Campaign view (per cell)
+
+```sh
+.venv/bin/python eda.py --campaign ../data/2026-11-30-Q/out [../data/2026-11-30-M/out ...] --out figs/ [--kw 10] [--steps 0:Q,50:B,130:Q]
+```
+
+It reads `cells.csv`, `blocks.csv`, `packets.csv`, `attempts.csv` and, if present, `tconv.csv` from one or more `out/` directories. Several runs (Q, M, B, S) are combined, and cells are grouped by condition.
+
+| Figure | Content |
+| --- | --- |
+| `cells_reliability.png` | PDR₁, PDR≤2 (primary), PDR_R per cell: point and Wilson 95 % CI, value printed next to the point |
+| `cells_efficiency.png` | Ā, η_air and switch rate σ (C4/C5 only), each in its own panel with a block-bootstrap 95 % CI |
+| `cells_occupancy.png` | Heatmap of the level occupancy π_ℓ (cell × level), share printed in each square |
+| `cells_attempts.png` | Heatmap of P(A = k) (cell × k) |
+| `blocks.png` | PDR≤2 per block per cell (spread, median bar), and PDR≤2 in run order (a drift check, threat to validity §2.5) |
+| `levels_trace.png` | C4/C5: the level of the first attempt per packet for every block (thin), and the lower median over blocks (thick); warm-up shaded, S steps dashed |
+| `tconv.png` | T_conv per configuration and step, with the count of blocks that never settled |
+
+**Design rules (from the dataviz method):**
+- **Colour follows the configuration:** C5 blue, C4 orange, C2 aqua (the first three slots of the reference palette, validated colour-blind-safe for all pairs), C1 neutral grey. Every configuration is also named on the x axis, so colour is never the only cue.
+- **Heatmaps use one blue ramp, light to dark, from 0 to 100 %.** Zero and NaN cells recede to a neutral ground.
+- **Never a dual axis:** measures with different scales get separate panels.
+- **Light theme only:** the figures are static PNGs for the thesis.
+
+### Single-node diagnostic
+
+A diagnostic for one node's `events.csv`. It looks at library events only, not `mark`, `app_tx` or `app_rx`. Use it for debugging a link, not for campaign results.
 
 ```sh
 .venv/bin/python eda.py out/events.csv [--node 2] [--role auto|sender|receiver] [--out figs/]
@@ -54,6 +82,5 @@ A diagnostic for one node's `events.csv`. It predates the command layer and look
 
 ## Known issues (recorded, not fixed)
 
-- The docstrings still use the old script names: `afec_logs.py` in `parse.py` and `afec_eda.py` in `eda.py`.
-- `eda.py` fixes the LQI axis to 40–60, so values outside that range are clipped from the plot.
-- **Missing:** `eda.py` has no per-cell or per-block campaign plots yet (the rest of run plan P0.4). They should read `metrics.py` output, not `events.csv`.
+- The `parse.py` docstring still uses the old script name `afec_logs.py`.
+- The single-node view fixes the LQI axis to 40–60, so values outside that range are clipped from the plot.

@@ -7,7 +7,7 @@ This is the host-side tooling for the AFEC thesis measurement campaign: the orch
 - `campaign.py`: runs one phase from `plans/<phase>.json` (schedule, `cfg`/`mark`/`run` per block, failure handling, `meta.json`, resume), then calls `metrics.py`. See `docs/campaign.md`.
 - `metrics.py`: per-packet, per-block and per-cell metrics (Wilson CIs and block bootstrap), T_conv, and the bench table. See `docs/metrics.md`.
 - `parse.py`: JSON lines → DataFrame or CSV, the `mark` block context and the clock sync. `metrics.py` imports `load_files` from it. See `docs/parse-and-eda.md`.
-- `eda.py`: a single-node diagnostic from `events.csv`. It predates the campaign events.
+- `eda.py`: per-cell campaign figures from `metrics.py` output (`--campaign`), and a single-node diagnostic from `events.csv`.
 - `plans/`: phase plans. `pilot-Q`, `Q` and `M` (whose TX power and geometry are still placeholders), and the `S` template, which needs the interferer.
 
 ## Commands
@@ -17,6 +17,7 @@ This is the host-side tooling for the AFEC thesis measurement campaign: the orch
 .venv/bin/python campaign.py plans/pilot-Q.json [--resume]            # drives the hardware: ask first
 .venv/bin/python metrics.py ../data/<run>/raw --out ../data/<run>/out --kw 10
 .venv/bin/python parse.py --mode file sender.log receiver.log --sync --out out/
+.venv/bin/python eda.py --campaign ../data/<run>/out --out ../data/<run>/figs
 .venv/bin/python eda.py out/events.csv --out figs/
 ```
 
