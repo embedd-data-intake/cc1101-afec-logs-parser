@@ -113,7 +113,7 @@ A failed block is recorded (`status: failed`, `error`) and re-run under a fresh 
 
 **Ctrl-C or SIGTERM:** the sender gets `stop`, the block in progress is recorded as `interrupted` (so its id is never reused), `meta.json` gets `status: interrupted`, and the ports are closed. `--resume` reopens the ports, which reboots the nodes, appends to the raw logs and continues with the next schedule entry that isn't `ok`.
 
-**Tested on the bench (2026-11-27):** a normal run, interrupt + resume, and reboot detection (T9, serial): a sender reset and a receiver reset mid-block, each giving a failed block, then a clean retry. The receiver case found the `busy` bug above (fixed the same day). To reset a board during a run without the button, pulse RTS (the board's EN) from a second handle on its port. **Not yet tested:** reboot detection untethered (MQTT `boot` + post-block `hello`) and everything involving the interferer.
+**Tested on the bench (2026-11-27):** a normal run, interrupt + resume, and reboot detection (T9, serial): a sender reset and a receiver reset mid-block, each giving a failed block, then a clean retry. The receiver case found the `busy` bug above (fixed the same day). To reset a board during a run without the button, pulse RTS (the board's EN) from a second handle on its port. Untethered reboot detection over MQTT (C8 smoke, same day): the `boot` event arrives once the node is back on WiFi (a few seconds), fails the block and the sender is stopped. **Not yet tested:** everything involving the interferer.
 
 ## meta.json
 
