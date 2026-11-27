@@ -439,7 +439,8 @@ def campaign_figures(dirs: list[Path], out: Path, kw: int, steps: str | None) ->
     axs[0].set_ylabel("block-bootstrap 95 % CI")
     for ax in axs:
         _xaxis(ax, keys, xs, groups)
-        ax.set_ylim(bottom=0)
+        top = ax.dataLim.y1 if np.isfinite(ax.dataLim.y1) and ax.dataLim.y1 > 0 else 1.0
+        ax.set_ylim(0, top * 1.12)               # headroom for the top point and its label
     _legend(fig, cfgs)
     fig.suptitle("Efficiency and adaptivity per cell", x=0.01, ha="left", fontweight="bold")
     fig.tight_layout(rect=(0, 0.02, 1, 0.93))
