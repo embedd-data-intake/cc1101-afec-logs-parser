@@ -1,0 +1,64 @@
+{
+  "run_id": "P3-B",
+  "condition": "B",
+  "seed": 104,
+  "blocks_per_config": 1,
+  "packets": 300,
+  "kw": 0,
+  "len": 32,
+  "interval": 2000,
+  "common": {
+    "init": 2,
+    "retries": 3,
+    "ackto": 400,
+    "tx": 0,
+    "dg": 2,
+    "nackstep": 2
+  },
+  "configs": {
+    "L0": {
+      "mode": 5,
+      "pin": 0
+    },
+    "L1": {
+      "mode": 5,
+      "pin": 1
+    },
+    "L2": {
+      "mode": 5,
+      "pin": 2
+    },
+    "L3": {
+      "mode": 5,
+      "pin": 3
+    },
+    "L4": {
+      "mode": 5,
+      "pin": 4
+    },
+    "L5": {
+      "mode": 5,
+      "pin": 5
+    },
+    "C2": {
+      "mode": 2
+    }
+  },
+  "logs": {
+    "transport": "mqtt",
+    "uri": "mqtt://localhost:1883",
+    "commands": "mqtt"
+  },
+  "notes": {
+    "purpose": "P3 pinned-level sweep in B (PLAN C5, D1 option a): appropriate level for T_conv in S",
+    "geometry": "Q geometry (sender back at the Q spot), interferer next to the receiver, frozen B setting",
+    "pin": "L0..L5 = C5 code path with the level pinned (cfg pin=<l>); C2 = LEVEL_NONE (CRC only). Appropriate = lowest level whose PDR1 meets the threshold (see docs/07-run-plan.md P3)"
+  },
+  "interferer": {
+    "port": "/dev/cu.usbserial-210",
+    "setup": [
+      "burst len=10 period=300 jitter=120 tx=0 seed=0"
+    ],
+    "during_block": true
+  }
+}

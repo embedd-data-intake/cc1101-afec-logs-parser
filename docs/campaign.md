@@ -87,7 +87,7 @@ With MQTT (`mqtt_logs.py`, paho-mqtt):
 1. **Open both ports** (three with an interferer). On the CP2102 boards this resets the ESP32s. Wait 2.5 s, send `hello` to each and check `role` (`sender`, `receiver`, `interferer`). Swapped ports stop the run with a message.
 2. **Schedule: permuted rounds.** For each of `blocks_per_config` rounds, the configuration list is shuffled with `random.Random(seed)`, so every round contains each configuration once. This spreads slow drift (ambient noise, temperature) evenly over the configurations.
 3. **Per block:**
-   1. Receiver first, then sender: `cfg …`, wait for `cfg_ok` and check that its `cfg` and every requested field match; then `mark run=<run_id> block=<n> cfg=<Cx>`. The firmware's `cfg` already re-initialises the radio and node and resets the link, so no separate `reset` is sent.
+   1. Receiver first, then sender: `cfg …`, wait for `cfg_ok` and check that its `cfg` (the mode name `C<mode>`; plan configurations may have other names, e.g. `L0`..`L5` in `plans/P3-B.json`) and every requested field match (including `pin`); then `mark run=<run_id> block=<n> cfg=<Cx>`. The firmware's `cfg` already re-initialises the radio and node and resets the link, so no separate `reset` is sent.
    2. Interferer: each `setup` line (wait for `burst_ok`), then `on` if `during_block` (wait for `intf_on`).
    3. `run n=<packets> len=<len> interval=<interval>` on the sender, then wait for `block_end`. If `steps` are set, the interferer commands are sent when the sender's `app_tx` reaches each packet index.
    4. Interferer `off` (wait for `intf_off`; its counters go into the block's `interferer` record).

@@ -84,6 +84,7 @@ REPO = HERE.parent
 CFG_FIELDS = {          # cfg key -> cfg_ok field, for verifying what the node applied
     "init": "init_lvl", "retries": "retries", "ackto": "ack_to_ms", "tx": "tx_dbm", "dg": "dg",
     "nackstep": "nack_step", "rssi_min": "rssi_min", "rssi_max": "rssi_max", "rssi_up": "rssi_up", "hys": "hys",
+    "pin": "pin",
 }
 
 
@@ -258,8 +259,9 @@ def cfg_line(args: dict) -> str:
 
 
 def check_cfg(ok: dict, args: dict, cfg: str, role: str) -> None:
-    if ok.get("cfg") != cfg:
-        raise BlockFailed(f"{role}: cfg_ok says {ok.get('cfg')}, expected {cfg}")
+    mode = f"C{args['mode']}"                   # cfg_ok names the mode; plan configs may have other names (P3: L0..L5)
+    if ok.get("cfg") != mode:
+        raise BlockFailed(f"{role}: cfg_ok says {ok.get('cfg')}, expected {mode} (config {cfg})")
     for k, f in CFG_FIELDS.items():
         if k not in args:
             continue
