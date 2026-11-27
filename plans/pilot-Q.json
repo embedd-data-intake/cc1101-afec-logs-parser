@@ -1,5 +1,5 @@
 {
-  "run_id": "2026-11-28-pilot-Q",
+  "run_id": "pilot-Q",
   "condition": "Q",
   "seed": 101,
   "blocks_per_config": 3,

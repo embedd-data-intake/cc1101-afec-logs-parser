@@ -45,7 +45,7 @@ Behind the TLS-intercepting proxy, `uv` needs `--system-certs` (or `SSL_CERT_FIL
 `campaign.py` writes to the parent repo's `data/` (`--data` to change it):
 
 ```
-data/<run_id>/            e.g. 2026-11-30-Q, 2026-11-28-pilot-Q
+data/<run_id>/            <YYYY-MM-DD-HHMM>-<title>, e.g. 2026-12-03-0915-Q, 2026-11-28-1400-pilot-Q
   meta.json               plan, schedule + seed, git commits, node builds, per-block results, final stats
   raw/sender.log          everything the node printed, untouched (non-JSON boot lines included)
   raw/receiver.log

@@ -5,7 +5,8 @@ Runs one campaign **phase** (one operating condition) from a JSON plan: all bloc
 ```sh
 .venv/bin/python campaign.py plans/pilot-Q.json                    # run a phase
 .venv/bin/python campaign.py plans/Q.json --dry-run                # print schedule + duration, touch nothing
-.venv/bin/python campaign.py plans/Q.json --resume                 # continue an interrupted run
+.venv/bin/python campaign.py plans/Q.json --resume                 # continue the latest unfinished Q run
+.venv/bin/python campaign.py plans/Q.json --resume 2026-12-03-0915-Q   # continue that run
 .venv/bin/python campaign.py plans/Q.json --blocks 1 --packets 12  # quick smoke run
 .venv/bin/python campaign.py plans/Q.json --mqtt mqtt://192.168.1.10:1883   # logs over MQTT
 ```
@@ -13,10 +14,10 @@ Runs one campaign **phase** (one operating condition) from a JSON plan: all bloc
 | Option | Meaning |
 | --- | --- |
 | `--data DIR` | Data root. Default: the parent repo's `data/` |
-| `--run-id ID` | Override the plan's `run_id` (needed to repeat a plan: an existing `meta.json` is never overwritten) |
+| `--run-id ID` | Override the plan's `run_id` (the title; the start time is still prefixed) |
 | `--blocks N`, `--packets N`, `--configs C2,C5` | Override blocks per configuration, packets per block, or the configuration set |
 | `--retries N` | Re-runs of a failed block (default 2). After that the run stops. |
-| `--resume` | Continue `<data>/<run_id>`. The schedule must be identical (same plan and overrides). |
+| `--resume [RUN_DIR]` | Continue `<data>/RUN_DIR`, or without a value the latest `<YYYY-MM-DD-HHMM>-<title>` run of this plan whose `meta.json` status is not `done`. The schedule must be identical (same plan and overrides). |
 | `--no-metrics` | Skip the final `metrics.py` call |
 | `--mqtt URI` | Read the logs from this MQTT broker instead of serial; overrides the plan's `logs` (see "Log transport") |
 | `--mqtt-commands` | With `--mqtt`: send the commands over MQTT too (untethered nodes, no serial ports) |
@@ -36,7 +37,7 @@ Freeze `retries`, `ackto`, `dg` and the C4 policy (`rssi_*`, `hys`) from the pil
 
 | Key | Example | Meaning |
 | --- | --- | --- |
-| `run_id` | `"2026-11-30-Q"` | Directory name under `data/`, and the `mark run=` tag in the logs |
+| `run_id` | `"Q"` | The run's **title**. The run directory under `data/` is `<YYYY-MM-DD-HHMM>-<title>` (local start time, e.g. `2026-12-03-0915-Q`), and that full name is also the `mark run=` tag, the MQTT topic segment and `meta.json`'s `run_id`. A leading `YYYY-MM-DD-` in the title is dropped. Every start makes a new directory, so repeating a plan never collides (within the same minute it refuses) |
 | `condition` | `"Q"` | Q, M, B or S. Passed to `metrics.py --condition`. |
 | `seed` | `1` | Schedule seed (stored in `meta.json`) |
 | `blocks_per_config` | `18` | Blocks per configuration |

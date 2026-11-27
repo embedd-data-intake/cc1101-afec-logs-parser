@@ -8,16 +8,20 @@ meta.json, and finally runs metrics.py.
 
     python campaign.py plans/pilot-Q.json                    # run a phase
     python campaign.py plans/Q.json --dry-run                # print the schedule only
-    python campaign.py plans/Q.json --resume                 # continue an interrupted run
+    python campaign.py plans/Q.json --resume                 # continue the latest unfinished Q run
+    python campaign.py plans/Q.json --resume 2026-12-03-0915-Q   # continue that run
     python campaign.py plans/Q.json --blocks 1 --packets 12  # quick smoke run
     python campaign.py plans/Q.json --mqtt mqtt://192.168.1.10:1883   # logs over MQTT (see below)
 
 Output: <data>/<run_id>/raw/{sender,receiver[,interferer]}.log, meta.json, out/ (metrics.py), figs/ (eda.py).
 <data> defaults to ../data (the thesis repo's data/ when this runs inside the submodule).
+<run_id> is "<YYYY-MM-DD-HHMM>-<title>": the local start time of the run plus the plan's run_id (the title).
+It is also the `mark run=` tag and the MQTT topic segment, and meta.json's run_id.
 
 Plan file (JSON)
 ----------------
-    run_id            "2026-11-30-Q"          directory name; also the `mark run=` tag
+    run_id            "Q"                     title; the run directory is <YYYY-MM-DD-HHMM>-<title>
+                                              (a leading YYYY-MM-DD- in the title is dropped)
     condition         "Q"                     Q | M | B | S, passed to metrics.py
     seed              1                       schedule seed (stored in meta.json)
     blocks_per_config 18
@@ -63,6 +67,7 @@ import datetime as dt
 import json
 import os
 import random
+import re
 import signal
 import socket
 import subprocess
@@ -486,17 +491,46 @@ def run_metrics(run_dir: Path, plan: dict, failed: list[int]) -> None:
     subprocess.run(figs)
 
 
+STAMP = re.compile(r"^\d{4}-\d{2}-\d{2}-")          # leading date in a plan title
+RUN_DIR = re.compile(r"^\d{4}-\d{2}-\d{2}-\d{4}-")    # <YYYY-MM-DD-HHMM>- prefix of a run directory
+
+
+def run_title(plan: dict) -> str:
+    return STAMP.sub("", RUN_DIR.sub("", plan["run_id"])) or plan["run_id"]
+
+
+def resolve_run_dir(data: Path, plan: dict, resume: bool | str | None) -> Path:
+    """New run: <data>/<YYYY-MM-DD-HHMM>-<title>, local start time. --resume DIR: that directory.
+    --resume alone: the latest run of this title whose meta.json status is not done."""
+    title = run_title(plan)
+    if isinstance(resume, str):
+        d = data / resume
+        if not (d / "meta.json").exists():
+            sys.exit(f"--resume {resume}: no {d / 'meta.json'}")
+        return d
+    if resume:
+        runs = sorted(d for d in data.glob(f"*-{title}") if RUN_DIR.match(d.name)
+                      and d.name[len("YYYY-MM-DD-HHMM-"):] == title and (d / "meta.json").exists())
+        open_runs = [d for d in runs if json.loads((d / "meta.json").read_text()).get("status") != "done"]
+        if not open_runs:
+            sys.exit(f"--resume: no unfinished '<YYYY-MM-DD-HHMM>-{title}' run in {data}")
+        return open_runs[-1]
+    return data / f"{dt.datetime.now():%Y-%m-%d-%H%M}-{title}"
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Run one campaign phase from a JSON plan.")
     ap.add_argument("plan", type=Path)
     ap.add_argument("--data", type=Path, default=REPO / "data", help="data root (default: thesis repo data/)")
-    ap.add_argument("--run-id", help="override the plan's run_id")
+    ap.add_argument("--run-id", help="override the plan's run_id (the title; the start time is still prefixed)")
     ap.add_argument("--blocks", type=int, help="override blocks_per_config")
     ap.add_argument("--packets", type=int, help="override packets per block")
     ap.add_argument("--configs", help="only these configurations, e.g. C2,C5")
     ap.add_argument("--retries", type=int, default=2, help="re-runs of a failed block")
     ap.add_argument("--dry-run", action="store_true", help="print the schedule and timing, touch nothing")
-    ap.add_argument("--resume", action="store_true", help="continue the run in <data>/<run_id>")
+    ap.add_argument("--resume", nargs="?", const=True, metavar="RUN_DIR",
+                    help="continue an interrupted run: the given <data>/RUN_DIR, or by default the latest "
+                         "<YYYY-MM-DD-HHMM>-<title> run of this plan that is not done")
     ap.add_argument("--no-metrics", action="store_true")
     ap.add_argument("--mqtt", metavar="URI", help="read the logs from this MQTT broker (overrides plan logs)")
     ap.add_argument("--mqtt-commands", action="store_true",
@@ -519,7 +553,9 @@ def main() -> None:
             print(k, cfg, cfg_line(cfg_args(plan, cfg, "sender")), "|", cfg_line(cfg_args(plan, cfg, "receiver")))
         return
 
-    run_dir = a.data / plan["run_id"]
+    run_dir = resolve_run_dir(a.data, plan, a.resume)
+    plan["run_id"] = run_dir.name                    # mark run= tag, MQTT topic, meta.json run_id
+    print(f"[campaign] run directory {run_dir}", file=sys.stderr)
     raw = run_dir / "raw"
     meta_path = run_dir / "meta.json"
     if a.resume:
@@ -528,7 +564,7 @@ def main() -> None:
             sys.exit("schedule differs from the one in meta.json (plan or overrides changed)")
     else:
         if meta_path.exists():
-            sys.exit(f"{run_dir} already has a meta.json: use --resume or another --run-id")
+            sys.exit(f"{run_dir} already has a meta.json: use --resume {run_dir.name} or wait a minute")
         raw.mkdir(parents=True, exist_ok=True)
         meta = {"run_id": plan["run_id"], "condition": plan["condition"], "created": now(),
                 "host": socket.gethostname(), "plan_file": str(a.plan), "plan": plan,

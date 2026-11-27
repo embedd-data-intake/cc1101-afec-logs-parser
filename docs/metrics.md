@@ -3,10 +3,10 @@
 Computes the evaluation metrics (report §2.2, parent `docs/03-evaluation-design.md`) from the sender and receiver logs of a campaign phase. Run plan item P0.4. `campaign.py` calls it at the end of a run; it can also be run by hand.
 
 ```sh
-.venv/bin/python metrics.py ../data/2026-11-30-Q/raw --out ../data/2026-11-30-Q/out --kw 10
+.venv/bin/python metrics.py ../data/2026-12-03-0915-Q/raw --out ../data/2026-12-03-0915-Q/out --kw 10
 .venv/bin/python metrics.py sender.log receiver.log --out out/ --kw 10 --condition Q --exclude-blocks 4,17
 # S: keep the transient, T_conv per step
-.venv/bin/python metrics.py ../data/2026-12-01-S/raw --out ... --kw 0 \
+.venv/bin/python metrics.py ../data/2026-12-05-0900-S/raw --out ... --kw 0 \
     --steps 0:Q,50:B,130:Q --appropriate Q=0-1,B=3-5 --k 5
 ```
 

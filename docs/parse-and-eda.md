@@ -51,7 +51,7 @@ Two views: **campaign figures** from `metrics.py` output, and a **single-node di
 ### Campaign view (per cell)
 
 ```sh
-.venv/bin/python eda.py --campaign ../data/2026-11-30-Q/out [../data/2026-11-30-M/out ...] --out figs/ [--kw 10] [--steps 0:Q,50:B,130:Q]
+.venv/bin/python eda.py --campaign ../data/2026-12-03-0915-Q/out [../data/2026-12-03-2100-M/out ...] --out figs/ [--kw 10] [--steps 0:Q,50:B,130:Q]
 ```
 
 It reads `cells.csv`, `blocks.csv`, `packets.csv`, `attempts.csv` and, if present, `tconv.csv` from one or more `out/` directories. Several runs (Q, M, B, S) are combined, and cells are grouped by condition.
