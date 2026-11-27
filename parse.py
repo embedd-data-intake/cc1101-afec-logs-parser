@@ -172,8 +172,9 @@ def _pair_offset(df: pd.DataFrame, a: int, b: int, tol_ms: float = 2000.0) -> fl
     """Estimated (t_b - t_a) in ms from DATA frames originated by node a and heard by node b."""
     tx = df[(df["ev"] == "tx") & (df["type"] == "DATA") & (df["node"] == a) & (df["src"] == a)]
     rx = df[(df["ev"] == "rx") & (df["type"] == "DATA") & (df["node"] == b) & (df["src"] == a)]
-    tx = tx[["seq", "t"]].dropna()
-    rx = rx[["seq", "t"]].dropna()
+    # uniform dtypes: merge_asof (pandas >= 3) rejects int/float key mismatches
+    tx = tx[["seq", "t"]].dropna().astype({"seq": "int64", "t": "float64"})
+    rx = rx[["seq", "t"]].dropna().astype({"seq": "int64", "t": "float64"})
     if tx.empty or rx.empty:
         return None
 
