@@ -37,6 +37,10 @@
     "sender": "/dev/cu.usbserial-5",
     "receiver": "/dev/cu.usbserial-0001"
   },
+  "logs": {
+    "transport": "mqtt",
+    "uri": "mqtt://localhost:1883"
+  },
   "notes": {
     "geometry": "bench, nodes 1-2 m apart, 0 dBm",
     "frozen": "set retries/ackto/dg and the C4 policy from the pilot before running"

@@ -34,6 +34,10 @@
     "sender": "/dev/cu.usbserial-5",
     "receiver": "/dev/cu.usbserial-0001"
   },
+  "logs": {
+    "transport": "mqtt",
+    "uri": "mqtt://localhost:1883"
+  },
   "notes": {
     "purpose": "P1 pilot, Q: check the pipeline, K_w, RTT, ACK timeout margin",
     "geometry": "bench, nodes 1-2 m apart, 0 dBm",

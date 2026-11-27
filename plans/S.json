@@ -58,6 +58,10 @@
     "--k",
     "5"
   ],
+  "logs": {
+    "transport": "mqtt",
+    "uri": "mqtt://localhost:1883"
+  },
   "notes": {
     "status": "TEMPLATE: needs the interferer firmware (P0.2); --appropriate comes from P3",
     "steps": "Q until packet 50, B 50-129, Q from 130"
