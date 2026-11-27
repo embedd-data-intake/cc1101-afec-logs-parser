@@ -1,0 +1,51 @@
+{
+  "run_id": "2026-11-30-M",
+  "condition": "M",
+  "seed": 2,
+  "blocks_per_config": 18,
+  "packets": 110,
+  "kw": 10,
+  "len": 32,
+  "interval": 2000,
+  "common": {
+    "init": 2,
+    "retries": 3,
+    "ackto": 400,
+    "tx": 0,
+    "dg": 2,
+    "nackstep": 2
+  },
+  "configs": {
+    "C1": {
+      "mode": 1
+    },
+    "C2": {
+      "mode": 2
+    },
+    "C4": {
+      "mode": 4,
+      "rssi_min": -110,
+      "rssi_max": -50,
+      "rssi_up": "11,9,7,5,3",
+      "hys": 1
+    },
+    "C5": {
+      "mode": 5
+    }
+  },
+  "ports": {
+    "sender": "/dev/cu.usbserial-5",
+    "receiver": "/dev/cu.usbserial-0001"
+  },
+  "notes": {
+    "geometry": "FILL IN after calibration: distance, walls/attenuation",
+    "tx": "FILL IN: frozen TX power (both nodes) giving C2 PDR1 ~70-90 %",
+    "frozen": "set retries/ackto/dg and the C4 policy from the pilot before running"
+  },
+  "sender": {
+    "tx": -30
+  },
+  "receiver": {
+    "tx": -30
+  }
+}

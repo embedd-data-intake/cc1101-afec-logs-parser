@@ -1,0 +1,42 @@
+{
+  "run_id": "2026-11-28-pilot-Q",
+  "condition": "Q",
+  "seed": 101,
+  "blocks_per_config": 3,
+  "packets": 60,
+  "kw": 10,
+  "len": 32,
+  "interval": 2000,
+  "common": {
+    "init": 2,
+    "retries": 3,
+    "ackto": 400,
+    "tx": 0,
+    "dg": 2,
+    "nackstep": 2
+  },
+  "configs": {
+    "C2": {
+      "mode": 2
+    },
+    "C4": {
+      "mode": 4,
+      "rssi_min": -110,
+      "rssi_max": -50,
+      "rssi_up": "11,9,7,5,3",
+      "hys": 1
+    },
+    "C5": {
+      "mode": 5
+    }
+  },
+  "ports": {
+    "sender": "/dev/cu.usbserial-5",
+    "receiver": "/dev/cu.usbserial-0001"
+  },
+  "notes": {
+    "purpose": "P1 pilot, Q: check the pipeline, K_w, RTT, ACK timeout margin",
+    "geometry": "bench, nodes 1-2 m apart, 0 dBm",
+    "c4_policy": "placeholder defaults, calibrate in P2"
+  }
+}

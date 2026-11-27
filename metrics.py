@@ -214,6 +214,22 @@ def packet_table(df: pd.DataFrame, tol_ms: float = 30.0) -> tuple[pd.DataFrame, 
     return pk.reset_index(), info
 
 
+def valid_blocks(df: pd.DataFrame, pk: pd.DataFrame, s_node: int, exclude: str) -> pd.Series:
+    """A block counts only if the sender logged block_end aborted=0 for it and it is not excluded."""
+    ex = {int(x) for x in exclude.split(",") if x.strip()}
+    be = df[(df["ev"] == "block_end") & (df["node"] == s_node)]
+    if "aborted" in be.columns:
+        be = be[be["aborted"] == 0]
+    clean = set(zip(be["mark_run"].astype(str), be["block"].astype(int))) if "mark_run" in be else set()
+    ok = pd.Series([(str(r), int(b)) in clean and int(b) not in ex for r, b in zip(pk["run"], pk["block"])],
+                   index=pk.index)
+    bad = pk.loc[~ok, ["run", "block"]].drop_duplicates()
+    if len(bad):
+        print(f"[metrics] left out {len(bad)} block(s) (excluded, aborted or unfinished): "
+              f"{sorted(bad['block'].astype(int).tolist())}", file=sys.stderr)
+    return ok
+
+
 # --------------------------------------------------------------------------- #
 # Block and cell metrics
 # --------------------------------------------------------------------------- #
@@ -375,6 +391,7 @@ def main() -> None:
     ap.add_argument("--tol-ms", type=float, default=30.0, help="clock tolerance for att_deliv")
     ap.add_argument("--boot", type=int, default=2000, help="block-bootstrap replicates")
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--exclude-blocks", default="", help="block ids to leave out (campaign.py: failed blocks)")
     args = ap.parse_args()
 
     df = load_files(expand_inputs(args.inputs), sync=True)
@@ -389,7 +406,9 @@ def main() -> None:
         return
 
     pk, info = packet_table(df, args.tol_ms)
+    pk["valid"] = valid_blocks(df, pk, info["sender"], args.exclude_blocks)
     pk.to_csv(args.out / "packets.csv", index=False)
+    pk = pk[pk["valid"]]
     bl = block_table(pk, args.kw, args.w, args.condition)
     bl.to_csv(args.out / "blocks.csv", index=False)
     cells = cell_table(bl, args.boot, args.seed)
