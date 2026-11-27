@@ -10,6 +10,7 @@ meta.json, and finally runs metrics.py.
     python campaign.py plans/Q.json --dry-run                # print the schedule only
     python campaign.py plans/Q.json --resume                 # continue an interrupted run
     python campaign.py plans/Q.json --blocks 1 --packets 12  # quick smoke run
+    python campaign.py plans/Q.json --mqtt mqtt://192.168.1.10:1883   # logs over MQTT (see below)
 
 Output: <data>/<run_id>/raw/{sender,receiver[,interferer]}.log, meta.json, out/ (metrics.py), figs/ (eda.py).
 <data> defaults to ../data (the thesis repo's data/ when this runs inside the submodule).
@@ -35,6 +36,17 @@ Plan file (JSON)
     metrics           optional extra metrics.py args, e.g. ["--steps", "0:Q,50:B,130:Q",
                                                           "--appropriate", "Q=0-1,B=3-5"]
     notes             free-form: geometry, distance, TX power rationale, environment
+    logs              optional: {"transport": "mqtt", "uri": "mqtt://192.168.1.10:1883"}
+                      (default serial; --mqtt URI sets it from the command line)
+
+Log transport
+-------------
+Commands always go over serial. With "serial" (firmware AFEC_LOG_SINK=1) the JSON events come back on
+the same port. With "mqtt" (firmware AFEC_LOG_SINK=2 or 3, env:dev-mqtt) they come from the broker,
+topics afec/<run_id>/<tx|rx>/log (mqtt_logs.py); raw/<role>.log then holds the MQTT lines plus the
+plain-text serial lines (boot messages), so metrics.py reads it unchanged. JSON lines that still
+arrive on serial (sink 3) go to raw/<role>-serial.txt, which metrics.py ignores. A block fails if a
+node reports `log_drop` (its MQTT ring overflowed). Broker credentials: AFEC_MQTT_USER / AFEC_MQTT_PASS.
 """
 from __future__ import annotations
 
@@ -50,6 +62,8 @@ import sys
 import threading
 import time
 from pathlib import Path
+
+from mqtt_logs import ROLE_NAMES, MqttLogs
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
@@ -67,11 +81,14 @@ class BlockFailed(Exception):
 # Serial node
 # --------------------------------------------------------------------------- #
 class Node:
-    """One serial port: a reader thread tees every line to the raw log and keeps parsed events."""
+    """One serial port for commands. Log lines come from the same port (serial transport) or from the
+    broker through feed() (MQTT transport); either way they are teed to the raw log and parsed."""
 
-    def __init__(self, role: str, port: str, log_path: Path, append: bool):
+    def __init__(self, role: str, port: str, log_path: Path, append: bool, mqtt: bool = False):
         import serial  # pyserial
-        self.role, self.port = role, port
+        self.role, self.port, self.mqtt = role, port, mqtt
+        self.side = (open(log_path.with_name(f"{role}-serial.txt"), "a" if append else "w", encoding="utf-8")
+                     if mqtt else None)       # serial JSON lines in MQTT mode (sink 3): kept, not parsed
         self.events: list[dict] = []
         self.boots = 0                       # "CC1101 ready" lines seen (each = a (re)boot)
         self.lock = threading.Lock()
@@ -95,18 +112,28 @@ class Node:
             if not raw:
                 continue
             line = raw.decode("utf-8", "replace")
-            self.log.write(line if line.endswith("\n") else line + "\n")
-            self.log.flush()
+            if self.side and line.startswith("{"):
+                self.side.write(line if line.endswith("\n") else line + "\n")
+                self.side.flush()
+                continue
             if line.startswith("CC1101 ready"):
                 with self.lock:
                     self.boots += 1
-            if line.startswith("{"):
-                try:
-                    ev = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                with self.lock:
-                    self.events.append(ev)
+            self.feed(line)
+
+    def feed(self, line: str) -> None:
+        """One log line (from serial or MQTT): tee it to the raw log and keep it if it is an event."""
+        ev = None
+        if line.startswith("{"):
+            try:
+                ev = json.loads(line)
+            except json.JSONDecodeError:
+                pass
+        with self.lock:
+            self.log.write(line if line.endswith("\n") else line + "\n")
+            self.log.flush()
+            if ev is not None:
+                self.events.append(ev)
 
     def cursor(self) -> int:
         with self.lock:
@@ -140,7 +167,14 @@ class Node:
         self.stop.set()
         self.thread.join(timeout=1)
         self.ser.close()
-        self.log.close()
+        with self.lock:
+            self.log.close()
+        if self.side:
+            self.side.close()
+
+    def since(self, cursor: int, ev: str) -> list[dict]:
+        with self.lock:
+            return [e for e in self.events[cursor:] if e.get("ev") == ev]
 
 
 # --------------------------------------------------------------------------- #
@@ -237,6 +271,7 @@ def now() -> str:
 def run_block(nodes: dict[str, Node], plan: dict, cfg: str, block: int, intf: dict | None) -> dict:
     s, r = nodes["sender"], nodes["receiver"]
     boots = {k: n.boots for k, n in nodes.items()}
+    first = {k: n.cursor() for k, n in nodes.items()}
     applied = {}
     for role in ("receiver", "sender"):              # receiver first: it must be ready when data flows
         n, args = nodes[role], cfg_args(plan, cfg, role)
@@ -286,30 +321,60 @@ def run_block(nodes: dict[str, Node], plan: dict, cfg: str, block: int, intf: di
             i.send("off")
     if end.get("aborted"):
         raise BlockFailed("sender: block aborted")
+    for role, n in nodes.items():                     # the receiver is never waited on during the run
+        if drops := n.since(first[role], "log_drop"):
+            raise BlockFailed(f"{role}: {sum(int(d.get('dropped', 0)) for d in drops)} log lines dropped (MQTT)")
     return {"run_start": start, "block_end": end, "cfg_ok": applied}
 
 
-def open_nodes(plan: dict, raw: Path, append: bool) -> dict[str, Node]:
-    nodes = {}
+def log_transport(plan: dict) -> dict:
+    lg = plan.get("logs") or {}
+    t = lg.get("transport", "serial")
+    if t not in ("serial", "mqtt"):
+        sys.exit(f"plan logs.transport must be serial or mqtt, not {t!r}")
+    if t == "mqtt" and not lg.get("uri"):
+        sys.exit("plan logs.transport is mqtt but logs.uri is missing (or pass --mqtt URI)")
+    return {"transport": t, **({"uri": lg["uri"]} if t == "mqtt" else {})}
+
+
+def open_nodes(plan: dict, raw: Path, append: bool) -> tuple[dict[str, Node], MqttLogs | None]:
+    mqtt = log_transport(plan)["transport"] == "mqtt"
+    nodes: dict[str, Node] = {}
+    broker = None
+    if mqtt:     # subscribe before opening the ports (which resets the boards), so boot lines are kept
+        def route(run_id: str, role: str, line: str) -> None:
+            n = nodes.get(ROLE_NAMES.get(role, ""))
+            if n is not None and n.mqtt:
+                n.feed(line)
+        broker = MqttLogs(plan["logs"]["uri"], route, client_id=f"afec-campaign-{os.getpid()}")
     for role in ("sender", "receiver"):
-        nodes[role] = Node(role, plan["ports"][role], raw / f"{role}.log", append)
+        nodes[role] = Node(role, plan["ports"][role], raw / f"{role}.log", append, mqtt)
     intf = plan.get("interferer")
-    if intf and intf.get("port"):
+    if intf and intf.get("port"):            # the interferer has no MQTT sink: always serial
         nodes["interferer"] = Node("interferer", intf["port"], raw / "interferer.log", append)
-    return nodes
+    return nodes, broker
 
 
-def handshake(nodes: dict[str, Node]) -> dict:
-    """Opening a CP2102 port resets the ESP32: wait for the boot, then check roles with hello."""
+def handshake(nodes: dict[str, Node], mqtt: bool) -> dict:
+    """Opening a CP2102 port resets the ESP32: wait for the boot, then check roles with hello.
+    With MQTT the reply only comes once the node has joined WiFi and the broker, hence the longer wait."""
     time.sleep(2.5)
     info = {}
     for role in ("sender", "receiver"):
         n = nodes[role]
         c = n.send("hello")
-        h = n.wait("hello", c, 5)
+        try:
+            h = n.wait("hello", c, 20 if mqtt else 5)
+        except BlockFailed:
+            via = "the MQTT broker" if mqtt else n.port
+            sys.exit(f"{role}: no hello on {via}. Is the node built with the matching AFEC_LOG_SINK "
+                     f"({'2/3, env:dev-mqtt' if mqtt else '1/3, env:dev'}), and (MQTT) are WiFi and broker reachable?")
         if h.get("role") != role:
             sys.exit(f"{n.port} answered as {h.get('role')!r}, expected {role}: swap the ports in the plan")
-        info[role] = {"port": n.port, "node": h.get("node"), "build": h.get("build")}
+        sink = h.get("sink", "serial")       # firmware before the log sink had no field: serial
+        if mqtt and "mqtt" not in sink:
+            sys.exit(f"{role}: firmware log sink is {sink!r}, the plan wants mqtt")
+        info[role] = {"port": n.port, "node": h.get("node"), "build": h.get("build"), "sink": sink}
     return info
 
 
@@ -341,13 +406,17 @@ def main() -> None:
     ap.add_argument("--dry-run", action="store_true", help="print the schedule and timing, touch nothing")
     ap.add_argument("--resume", action="store_true", help="continue the run in <data>/<run_id>")
     ap.add_argument("--no-metrics", action="store_true")
+    ap.add_argument("--mqtt", metavar="URI", help="read the logs from this MQTT broker (overrides plan logs)")
     a = ap.parse_args()
 
     plan = load_plan(a.plan, a)
+    if a.mqtt:
+        plan["logs"] = {"transport": "mqtt", "uri": a.mqtt}
+    logs = log_transport(plan)
     sched = schedule(plan)
     est_h = len(sched) * (plan["packets"] * plan["interval"] / 1000 + 10) / 3600
     print(f"[campaign] {plan['run_id']}: {len(sched)} blocks x {plan['packets']} packets, "
-          f"~{est_h:.1f} h of radio time", file=sys.stderr)
+          f"~{est_h:.1f} h of radio time, logs via {logs['transport']} {logs.get('uri', '')}", file=sys.stderr)
     if a.dry_run:
         for k, cfg in enumerate(sched):
             print(k, cfg, cfg_line(cfg_args(plan, cfg, "sender")), "|", cfg_line(cfg_args(plan, cfg, "receiver")))
@@ -376,10 +445,14 @@ def main() -> None:
     def on_term(*_):                                   # kill / SIGTERM: stop cleanly like Ctrl-C
         raise KeyboardInterrupt
     signal.signal(signal.SIGTERM, on_term)
-    nodes = open_nodes(plan, raw, append=a.resume)
+    nodes, broker = open_nodes(plan, raw, append=a.resume)
+    mqtt = broker is not None
     current: dict | None = None                        # block in progress (not yet in meta)
+    session: dict = {}
     try:
-        meta["sessions"].append({"started": now(), "nodes": handshake(nodes), "firmware": provenance()})
+        session = {"started": now(), "logs": logs, "firmware": provenance()}
+        meta["sessions"].append(session)
+        session["nodes"] = handshake(nodes, mqtt)
         if nodes.get("interferer"):
             for cmd in plan["interferer"].get("setup", []):
                 nodes["interferer"].send(cmd)
@@ -430,11 +503,21 @@ def main() -> None:
             try:
                 c = nodes[role].send("stats")
                 meta.setdefault("final_stats", {})[role] = nodes[role].wait("stats", c, 3)
-            except BlockFailed:
-                pass
+                if mqtt:                                    # node-side counters of the MQTT sink
+                    ls = nodes[role].wait("log_stats", c, 3)
+                    session.setdefault("log_stats", {})[role] = ls
+                    if ls.get("dropped"):
+                        print(f"[campaign] WARNING {role}: {ls['dropped']} log lines dropped this boot",
+                              file=sys.stderr)
+            except BlockFailed as ex:
+                print(f"[campaign] final stats: {ex}", file=sys.stderr)
+        if mqtt:
+            session["mqtt"] = {"messages": broker.messages, "disconnects": broker.disconnects}
         meta["ended"] = now()
         write_meta(meta_path, meta)
-        time.sleep(0.3)
+        time.sleep(1.0 if mqtt else 0.3)                   # let the last QoS 1 messages land
+        if broker:
+            broker.close()
         for n in nodes.values():
             n.close()
 

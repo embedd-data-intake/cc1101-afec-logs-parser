@@ -11,6 +11,11 @@ CLI examples
     python afec_logs.py --mode serial --port COM5 --baud 115200 --duration 300 \
         --raw-log sender.log --out out/
 
+    # live from the MQTT broker (firmware AFEC_LOG_SINK=2|3), both nodes, one run, 10 minutes;
+    # --raw-dir writes <dir>/sender.log and <dir>/receiver.log for file mode / metrics.py
+    python afec_logs.py --mode mqtt --broker mqtt://192.168.1.10:1883 --run-id 2026-11-30-Q \
+        --duration 600 --raw-dir raw/ --sync --out out/
+
 As a module (e.g. in a notebook)
 --------------------------------
     from afec_logs import load_files, events
@@ -135,6 +140,47 @@ def iter_serial(port: str, baud: int, duration: float | None, max_lines: int | N
     finally:
         if raw:
             raw.close()
+
+
+def iter_mqtt(uri: str, run_id: str | None, role: str | None, duration: float | None,
+              max_lines: int | None, raw_dir: Path | None) -> Iterator[tuple[str, str]]:
+    """Yields (source, line) for every log message on afec/<run_id>/<role>/log until Ctrl-C,
+    `duration` or `max_lines`. source is the node role name (sender, receiver)."""
+    import queue
+    from mqtt_logs import ROLE_NAMES, MqttLogs, topic_filter
+
+    q: queue.Queue = queue.Queue()
+    broker = MqttLogs(uri, lambda run, r, line: q.put((ROLE_NAMES.get(r, r), line)),
+                      topic=topic_filter(run_id, role))
+    print(f"[mqtt] {uri} {broker.topic} - Ctrl-C to stop", file=sys.stderr)
+    raw: dict[str, object] = {}
+    if raw_dir:
+        raw_dir.mkdir(parents=True, exist_ok=True)
+    t0 = time.monotonic()
+    n = 0
+    try:
+        while True:
+            if duration is not None and time.monotonic() - t0 >= duration:
+                break
+            if max_lines is not None and n >= max_lines:
+                break
+            try:
+                src, line = q.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            n += 1
+            if raw_dir:
+                if src not in raw:
+                    raw[src] = open(raw_dir / f"{src}.log", "w", encoding="utf-8")
+                raw[src].write(line + "\n")
+                raw[src].flush()
+            yield src, line
+    except KeyboardInterrupt:
+        print("\n[mqtt] stopped by user", file=sys.stderr)
+    finally:
+        broker.close()
+        for f in raw.values():
+            f.close()
 
 
 # --------------------------------------------------------------------------- #
@@ -293,6 +339,22 @@ def load_serial(port: str, baud: int = 115200, duration: float | None = None,
     return _finish(c.rows, sync=False, ref_node=None)
 
 
+def load_mqtt(uri: str, run_id: str | None = None, role: str | None = None,
+              duration: float | None = None, max_lines: int | None = None,
+              raw_dir: str | Path | None = None, sync: bool = False,
+              ref_node: int | None = None) -> pd.DataFrame:
+    """Live capture from the broker. One Collector per node, so `line` numbers stay per source."""
+    cols: dict[str, Collector] = {}
+    for src, line in iter_mqtt(uri, run_id, role, duration, max_lines, Path(raw_dir) if raw_dir else None):
+        cols.setdefault(src, Collector(src)).feed(line)
+    rows: list[dict] = []
+    for src, c in cols.items():
+        print(f"[{src}] {len(c.rows)} events, {c.broken} broken JSON lines, "
+              f"{c.ignored} non-JSON lines skipped", file=sys.stderr)
+        rows += c.rows
+    return _finish(rows, sync, ref_node)
+
+
 def _finish(rows: list[dict], sync: bool, ref_node: int | None) -> pd.DataFrame:
     df = build_frame(rows)
     if sync and not df.empty:
@@ -347,13 +409,18 @@ def print_summary(df: pd.DataFrame) -> None:
 # --------------------------------------------------------------------------- #
 def main() -> None:
     ap = argparse.ArgumentParser(description="Parse AFEC JSONL logs into pandas tables / CSV.")
-    ap.add_argument("--mode", choices=["file", "serial"], required=True)
+    ap.add_argument("--mode", choices=["file", "serial", "mqtt"], required=True)
     ap.add_argument("inputs", nargs="*", help="log file(s) (file mode)")
     ap.add_argument("--port", help="serial port, e.g. COM5 or /dev/ttyUSB0 (serial mode)")
     ap.add_argument("--baud", type=int, default=115200)
-    ap.add_argument("--duration", type=float, help="serial: stop after N seconds")
-    ap.add_argument("--max-lines", type=int, help="serial: stop after N lines")
+    ap.add_argument("--duration", type=float, help="serial/mqtt: stop after N seconds")
+    ap.add_argument("--max-lines", type=int, help="serial/mqtt: stop after N lines")
     ap.add_argument("--raw-log", type=Path, help="serial: also save the raw capture to this file")
+    ap.add_argument("--broker", help="mqtt: broker URI, e.g. mqtt://192.168.1.10:1883 "
+                                     "(credentials from AFEC_MQTT_USER / AFEC_MQTT_PASS)")
+    ap.add_argument("--run-id", help="mqtt: only this run (topic afec/<run_id>/+/log); default all")
+    ap.add_argument("--role", choices=["tx", "rx"], help="mqtt: only this node; default both")
+    ap.add_argument("--raw-dir", type=Path, help="mqtt: also save the raw capture as <dir>/<role>.log")
     ap.add_argument("--sync", action="store_true",
                     help="estimate clock offsets between nodes and add t_sync / t_sync_s columns")
     ap.add_argument("--ref-node", type=int, help="node id used as time reference for --sync")
@@ -366,6 +433,11 @@ def main() -> None:
         if not args.inputs:
             ap.error("file mode needs at least one input file")
         df = load_files(args.inputs, sync=args.sync, ref_node=args.ref_node)
+    elif args.mode == "mqtt":
+        if not args.broker:
+            ap.error("mqtt mode needs --broker")
+        df = load_mqtt(args.broker, args.run_id, args.role, args.duration, args.max_lines,
+                       args.raw_dir, sync=args.sync, ref_node=args.ref_node)
     else:
         if not args.port:
             ap.error("serial mode needs --port")

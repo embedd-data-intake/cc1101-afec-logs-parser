@@ -1,6 +1,6 @@
 # cc1101-afec-logs-parser docs
 
-Host-side tooling for the AFEC thesis measurement campaign. It drives the two nodes over serial, captures their JSON-lines logs, and turns them into the metrics of the evaluation design (report chapter 2, `../docs/03-evaluation-design.md` in the parent repo).
+Host-side tooling for the AFEC thesis measurement campaign. It drives the two nodes over serial, captures their JSON-lines logs (over serial, or from an MQTT broker when the firmware is built with the MQTT log sink), and turns them into the metrics of the evaluation design (report chapter 2, `../docs/03-evaluation-design.md` in the parent repo).
 
 | File | What it covers |
 | --- | --- |
@@ -16,6 +16,7 @@ Host-side tooling for the AFEC thesis measurement campaign. It drives the two no
         ▼
  campaign.py ──serial──► sender (node 2) ─┐
         │      commands   receiver (node 1)├─► raw/sender.log, raw/receiver.log  (JSON lines, untouched)
+        │ ◄──logs: serial, or MQTT afec/<run_id>/<tx|rx>/log (mqtt_logs.py, --mqtt)
         │                 [interferer]    ─┘    meta.json  (plan, schedule, commits, per-block results)
         ▼
  metrics.py ──uses──► parse.py (load_files: parse, mark context, --sync clock offsets)
@@ -34,7 +35,7 @@ The firmware side of the command layer (commands, firmware events such as `app_t
 
 ```sh
 uv venv --python 3.13 .venv            # system python3 on the bench Mac is 3.9, too old (needs >= 3.10)
-uv pip install -r requirements.txt     # pandas 3, numpy, matplotlib, pyserial
+uv pip install -r requirements.txt     # pandas 3, numpy, matplotlib, pyserial, paho-mqtt
 ```
 
 Behind the TLS-intercepting proxy, `uv` needs `--system-certs` (or `SSL_CERT_FILE=~/.config/certs/macos-bundle.pem`). Run every script with `.venv/bin/python`.

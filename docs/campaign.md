@@ -7,6 +7,7 @@ Runs one campaign **phase** (one operating condition) from a JSON plan: all bloc
 .venv/bin/python campaign.py plans/Q.json --dry-run                # print schedule + duration, touch nothing
 .venv/bin/python campaign.py plans/Q.json --resume                 # continue an interrupted run
 .venv/bin/python campaign.py plans/Q.json --blocks 1 --packets 12  # quick smoke run
+.venv/bin/python campaign.py plans/Q.json --mqtt mqtt://192.168.1.10:1883   # logs over MQTT
 ```
 
 | Option | Meaning |
@@ -17,6 +18,7 @@ Runs one campaign **phase** (one operating condition) from a JSON plan: all bloc
 | `--retries N` | Re-runs of a failed block (default 2). After that the run stops. |
 | `--resume` | Continue `<data>/<run_id>`. The schedule must be identical (same plan and overrides). |
 | `--no-metrics` | Skip the final `metrics.py` call |
+| `--mqtt URI` | Read the logs from this MQTT broker instead of serial; overrides the plan's `logs` (see "Log transport") |
 
 ## Plan files (`plans/`)
 
@@ -50,6 +52,25 @@ Freeze `retries`, `ackto`, `dg` and the C4 policy (`rssi_*`, `hys`) from the pil
 
 The `cfg` keys are the firmware's (`mode`, `init`, `retries`, `ackto`, `tx`, `dg`, `nackstep`, `rssi_min`, `rssi_max`, `rssi_up`, `hys`). The order of precedence is `common` < `configs[Cx]` < `sender`/`receiver`.
 
+## Log transport (serial or MQTT)
+
+Added 2026-11-27 (PLAN M6). **Commands always go over serial.** Where the JSON events come back from depends on the firmware's build-time log sink (`AFEC_LOG_SINK`, see "Log sink" in `../cc1101-afec-sender/docs/firmware.md`) and on the plan:
+
+| Plan `logs` | Firmware sink | Events read from |
+| --- | --- | --- |
+| absent or `{"transport": "serial"}` | `1` serial (`env:dev`) or `3` both | the serial port, as before |
+| `{"transport": "mqtt", "uri": "mqtt://host:1883"}` or `--mqtt URI` | `2` mqtt (`env:dev-mqtt`) or `3` both | the broker, topics `afec/<run_id>/<tx\|rx>/log` |
+
+With MQTT (`mqtt_logs.py`, paho-mqtt):
+- **The broker connection is made before the ports are opened** (opening a port resets the board), so the boot lines are captured. An unreachable broker stops the run before any board is touched.
+- **The raw logs keep their layout.** `raw/<role>.log` gets every MQTT line in arrival order plus the plain-text serial lines (`CC1101 ready`, used for reboot detection). `metrics.py` reads it unchanged. JSON lines that also arrive on serial (sink 3) go to `raw/<role>-serial.txt`, which `metrics.py` doesn't read, so nothing is counted twice.
+- **The handshake** waits up to 20 s for `hello` (the node has to join WiFi and the broker after the reset) and checks that the node's `sink` includes `mqtt`. A serial-only build stops the run with a message.
+- **Dropped lines fail the block.** After `block_end`, if either node has logged `log_drop` (its 32 KB ring overflowed) since the block started, the block fails and is re-run. A `log_drop` reported after that check is still caught at the end: the final `stats` also collects `log_stats` from both nodes, and a non-zero `dropped` prints a warning. The interferer stays on serial.
+- **meta.json** records `logs` in each session, the node's `sink` in `nodes`, `log_stats` (node counters `enq`, `dropped`, `pub`, …) and `mqtt` (`messages` received by the orchestrator, broker `disconnects`).
+- Broker credentials, if needed: `AFEC_MQTT_USER` / `AFEC_MQTT_PASS` in the environment, never in the plan.
+
+**Tested without hardware (2026-11-27)** against a local broker (`amqtt`) and fake nodes on ptys: a normal run, a `log_drop` → failed block → re-run, sink 3 (duplicates kept out of the logs), `--resume`, a serial-only firmware with an MQTT plan, and broker down. The serial transport was re-checked the same way. **Not yet tested on the real nodes.**
+
 ## What a run does
 
 1. **Open both ports.** On the CP2102 boards this resets the ESP32s. Wait 2.5 s, send `hello` to each and check `role`. Swapped ports stop the run with a message.
@@ -71,6 +92,7 @@ A block **fails** when:
 - `cfg_ok` doesn't match the request;
 - a node reboots (a new `CC1101 ready` line);
 - `run_start` or `cfg_ok` doesn't arrive in time;
+- (MQTT) a node logs `log_drop` during the block;
 - the block takes longer than `packets × max(interval, (1 + retries) × (ackto + 150 ms)) + 30 s`. The sender then gets `stop`.
 
 A failed block is recorded (`status: failed`, `error`) and re-run under a fresh block id, up to `--retries` times. After a reboot the orchestrator waits 3 s first. If an entry still fails, the run stops.
@@ -90,7 +112,7 @@ A failed block is recorded (`status: failed`, `error`) and re-run under a fresh 
 | `schedule`, `schedule_rule` | Configuration per schedule index |
 | `firmware` | `{commit, dirty}` for the lib, sender, receiver, parser and thesis repos at run start. **Commit everything before a real run**, so that `dirty` is false. |
 | `radio` | Frequency, sync word, bitrate, whitening, HW CRC (fixed in `config.h`) |
-| `sessions[]` | One per start or resume: time, the `hello` of each node (port, node id, build timestamp), firmware commits |
+| `sessions[]` | One per start or resume: time, `logs` (transport, URI), the `hello` of each node (port, node id, build timestamp, `sink`), firmware commits; with MQTT also `log_stats` and `mqtt` (see "Log transport") |
 | `blocks[]` | `sched_idx`, `block`, `cfg`, `attempt`, `started`, `ended`, `status` (`ok`, `failed`, `interrupted`), and for `ok`: `ok`, `no_ack`, `duty_limit`, `dur_ms` from `block_end`; for failures, `error` |
 | `cfg_ok` | The first `cfg_ok` of each node per configuration: the effective configuration as the nodes reported it |
 | `final_stats` | `stats` of both nodes at the end (cumulative since boot) |

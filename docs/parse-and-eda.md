@@ -2,11 +2,13 @@
 
 ## parse.py — logs to tables
 
-Turns JSON-lines logs (from files or a live serial port) into a pandas DataFrame and CSV files. It is generic: any line `{"t":…,"node":…,"lv":…,"ev":…, …}` becomes a row, so new firmware or library events need no parser change. `metrics.py` imports `load_files` and `events` from it.
+Turns JSON-lines logs (from files, a live serial port or an MQTT broker) into a pandas DataFrame and CSV files. It is generic: any line `{"t":…,"node":…,"lv":…,"ev":…, …}` becomes a row, so new firmware or library events need no parser change. `metrics.py` imports `load_files` and `events` from it.
 
 ```sh
 .venv/bin/python parse.py --mode file sender.log receiver.log --sync --out out/ [--summary] [--parquet]
 .venv/bin/python parse.py --mode serial --port /dev/cu.usbserial-5 --duration 300 --raw-log sender.log --out out/
+.venv/bin/python parse.py --mode mqtt --broker mqtt://192.168.1.10:1883 [--run-id ID] [--role tx|rx] \
+    --duration 300 --raw-dir raw/ --sync --out out/
 ```
 
 ```python
@@ -39,6 +41,8 @@ ok = events(df, "send_ok")            # one event type, empty columns dropped
 The two directions are averaged. The lowest node id is the reference. The offset includes airtime and processing, a few ms, which is fine for attempt attribution but not for sub-ms timing.
 
 **Serial mode.** Reads with pyserial, tees the raw capture to `--raw-log`, and stops after `--duration` s, `--max-lines` lines or Ctrl-C. `--sync` doesn't work here (a single port). For campaign runs use `campaign.py`, which captures both nodes.
+
+**MQTT mode.** For firmware built with the MQTT log sink. Subscribes to `afec/<run_id>/<role>/log` (`+` for whatever isn't given), so one capture holds both nodes and `--sync` works. `source` is the node role (`sender`, `receiver`). `--raw-dir` writes `<dir>/sender.log` and `<dir>/receiver.log`, which file mode and `metrics.py` can read. Stops after `--duration`, `--max-lines` or Ctrl-C. Credentials: `AFEC_MQTT_USER` / `AFEC_MQTT_PASS`. Checked on 2026-11-27 by replaying the Q pilot logs (8384 lines) through a local broker: the `--raw-dir` capture was byte-identical to the JSON lines of the originals.
 
 ## eda.py — plots
 
