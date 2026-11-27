@@ -287,6 +287,16 @@ def now() -> str:
 # --------------------------------------------------------------------------- #
 # Running
 # --------------------------------------------------------------------------- #
+def abort_run(s: Node, block: int) -> None:
+    """Stop a sender run that may still be active and wait until it has ended. If it already ended
+    or the sender rebooted, `stop` gets cmd_err `no run active`, which is fine."""
+    c = s.send("stop")
+    try:
+        s.wait("block_end", c, 5, block=block)
+    except BlockFailed:
+        pass
+
+
 def run_block(nodes: dict[str, Node], plan: dict, cfg: str, block: int, intf: dict | None) -> dict:
     s, r = nodes["sender"], nodes["receiver"]
     boots = {k: n.boots for k, n in nodes.items()}
@@ -333,8 +343,10 @@ def run_block(nodes: dict[str, Node], plan: dict, cfg: str, block: int, intf: di
             if r.boots > boots["receiver"]:
                 raise BlockFailed("receiver: node rebooted")
             if time.monotonic() - t0 > timeout:
-                s.send("stop")
                 raise BlockFailed(f"sender: block did not finish within {timeout:.0f} s")
+    except BlockFailed:
+        abort_run(s, block)      # the sender may still be mid-run: a retry's cfg would get `busy`
+        raise
     finally:
         if i and intf and (intf.get("during_block") or steps):
             i.send("off")
@@ -532,6 +544,7 @@ def main() -> None:
                 if rec["status"] == "ok":
                     break
             else:
+                meta["status"] = "failed"
                 raise SystemExit(f"[campaign] schedule entry {k} ({cfg}) failed {1 + a.retries} times - stopping")
             el = time.monotonic() - t_start
             eta = el / (n_done + 1) * (len(todo) - n_done - 1) / 60

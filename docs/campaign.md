@@ -103,15 +103,17 @@ A block **fails** when:
 - a node reboots (a new `CC1101 ready` line, or untethered a `boot` event);
 - `run_start` or `cfg_ok` doesn't arrive in time;
 - (MQTT) a node logs `log_drop` during the block;
-- the block takes longer than `packets × max(interval, (1 + retries) × (ackto + 150 ms)) + 30 s`. The sender then gets `stop`.
+- the block takes longer than `packets × max(interval, (1 + retries) × (ackto + 150 ms)) + 30 s`.
 
-A failed block is recorded (`status: failed`, `error`) and re-run under a fresh block id, up to `--retries` times. After a reboot the orchestrator waits 3 s first. If an entry still fails, the run stops.
+If a block fails after `run_start`, the sender gets `stop` and the orchestrator waits up to 5 s for its `block_end aborted=1`. Otherwise the sender would still be mid-run (e.g. after a receiver reboot) and the retry's `cfg` would get `cmd_err busy`. After a sender reboot, the `stop` just gets `cmd_err no run active`, which is ignored.
+
+A failed block is recorded (`status: failed`, `error`) and re-run under a fresh block id, up to `--retries` times. After a reboot the orchestrator waits 3 s first. If an entry still fails, the run stops with `meta.json` `status: failed`.
 
 `metrics.py` leaves out failed and interrupted blocks in two ways: through `--exclude-blocks`, and because it only counts blocks for which the sender logged `block_end aborted=0`.
 
 **Ctrl-C or SIGTERM:** the sender gets `stop`, the block in progress is recorded as `interrupted` (so its id is never reused), `meta.json` gets `status: interrupted`, and the ports are closed. `--resume` reopens the ports, which reboots the nodes, appends to the raw logs and continues with the next schedule entry that isn't `ok`.
 
-**Tested on the bench (2026-11-27):** a normal run, interrupt + resume. **Not yet tested:** reboot detection (press a board's reset during a block) and everything involving the interferer.
+**Tested on the bench (2026-11-27):** a normal run, interrupt + resume, and reboot detection (T9, serial): a sender reset and a receiver reset mid-block, each giving a failed block, then a clean retry. The receiver case found the `busy` bug above (fixed the same day). To reset a board during a run without the button, pulse RTS (the board's EN) from a second handle on its port. **Not yet tested:** reboot detection untethered (MQTT `boot` + post-block `hello`) and everything involving the interferer.
 
 ## meta.json
 
