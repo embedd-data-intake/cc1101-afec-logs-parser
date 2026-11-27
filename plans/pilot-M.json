@@ -1,0 +1,51 @@
+{
+  "run_id": "pilot-M",
+  "condition": "M",
+  "seed": 103,
+  "blocks_per_config": 3,
+  "packets": 60,
+  "kw": 10,
+  "len": 32,
+  "interval": 2000,
+  "common": {
+    "init": 2,
+    "retries": 3,
+    "ackto": 400,
+    "tx": 0,
+    "dg": 2,
+    "nackstep": 2
+  },
+  "configs": {
+    "C2": {
+      "mode": 2
+    },
+    "C4": {
+      "mode": 4,
+      "rssi_min": -110,
+      "rssi_max": -50,
+      "rssi_up": "11,9,7,5,3",
+      "hys": 1
+    },
+    "C5": {
+      "mode": 5
+    }
+  },
+  "logs": {
+    "transport": "mqtt",
+    "uri": "mqtt://localhost:1883",
+    "commands": "mqtt"
+  },
+  "notes": {
+    "purpose": "P1 pilot, M (PLAN C2): confirm C2 PDR1 ~70-90 % near sensitivity; inputs for C4 calibration and the freeze",
+    "geometry": "sender moved away from the receiver (pos3) with its antenna rotated (rot3); receiver in its Q place; sender and receiver on battery, untethered. Interferer present (USB, next to the receiver) but off",
+    "tx": "-20 dBm on both nodes (DATA and ACK symmetric)",
+    "calibration": "2026-11-27: C2 PDR1 0.75 at DATA RSSI -103 dBm median (data/2026-11-27-2022-cal-M-txm20-pos3-rot3). The 70-90 % band is only ~1-2 dB wide (-101 dBm: 0.97, -105 dBm: 0.12): check RSSI and C2 PDR1 per block",
+    "c4_policy": "placeholder defaults, calibrate in P2"
+  },
+  "sender": {
+    "tx": -20
+  },
+  "receiver": {
+    "tx": -20
+  }
+}

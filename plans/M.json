@@ -33,23 +33,21 @@
       "mode": 5
     }
   },
-  "ports": {
-    "sender": "/dev/cu.usbserial-5",
-    "receiver": "/dev/cu.usbserial-0001"
-  },
   "logs": {
     "transport": "mqtt",
-    "uri": "mqtt://localhost:1883"
+    "uri": "mqtt://localhost:1883",
+    "commands": "mqtt"
   },
   "notes": {
-    "geometry": "FILL IN after calibration: distance, walls/attenuation",
-    "tx": "FILL IN: frozen TX power (both nodes) giving C2 PDR1 ~70-90 %",
+    "geometry": "sender moved away from the receiver (pos3) with its antenna rotated (rot3), position and angle marked by the author 2026-11-27; receiver in its Q place; both on battery, untethered (commands over MQTT). Interferer stays on USB next to the receiver, not used (no interferer block in this plan)",
+    "tx": "-20 dBm on both nodes. Pilot 2026-11-27 (data/2026-11-27-2024-pilot-M): DATA RSSI -102/-103 dBm, C2 PDR1 0.67 (0.62/0.66/0.74)",
+    "stability": "the 70-90 % band is only ~1-2 dB wide (-101 dBm: 0.97, -105 dBm: 0.12): check DATA RSSI ~ -102 dBm and C2 PDR1 in the first blocks, and per block afterwards",
     "frozen": "set retries/ackto/dg and the C4 policy from the pilot before running"
   },
   "sender": {
-    "tx": -30
+    "tx": -20
   },
   "receiver": {
-    "tx": -30
+    "tx": -20
   }
 }
