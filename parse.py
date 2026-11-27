@@ -22,6 +22,8 @@ Output tables
 -------------
     events.csv            every event, one wide row each (columns unused by an event are NaN)
     by_event/<ev>.csv     one file per event type, all-NaN columns dropped
+                          (campaign logs: every row also carries mark_run / mark_block / mark_cfg,
+                          the block context of the last firmware `mark` event in the same log)
     offsets.json          estimated clock offsets per node (only with --sync)
 """
 from __future__ import annotations
@@ -42,8 +44,10 @@ import pandas as pd
 # --------------------------------------------------------------------------- #
 MODE_NAMES = {0: "RAW(C1)", 1: "ARQ(C2)", 2: "HWFEC(C3)", 3: "RSSI(C4)", 4: "AFEC(C5)"}
 LVL_NAMES = {0: "Hamming", 1: "BCH2", 2: "BCH5", 3: "RS2", 4: "RS4", 5: "RS8", 7: "none"}
-LVL_COLS = ["lvl", "peer_lvl", "init_lvl", "req_lvl"]      # level columns on any event
-CATEGORICAL = ["ev", "lv", "type", "cast", "reason", "tag", "action"]
+LVL_COLS = ["lvl", "peer_lvl", "init_lvl", "req_lvl", "lvl_next"]   # level columns on any event
+CATEGORICAL = ["ev", "lv", "type", "cast", "reason", "tag", "action", "res", "role", "op"]
+# Block context from the firmware's `mark` event, forward-filled onto every later event of the same log
+MARK_COLS = {"run": "mark_run", "block": "mark_block", "cfg": "mark_cfg"}
 BASE_COLS = ["t", "node", "lv", "ev"]
 
 
@@ -140,10 +144,12 @@ def build_frame(rows: list[dict]) -> pd.DataFrame:
     if not rows:
         return pd.DataFrame(columns=BASE_COLS + ["source", "line"])
     df = pd.DataFrame(rows)
+    df = _add_mark_context(df)
 
     # stable column order: base first, then the rest alphabetically
-    rest = sorted(c for c in df.columns if c not in BASE_COLS + ["source", "line"])
-    df = df[BASE_COLS + ["source", "line"] + rest]
+    marks = [c for c in MARK_COLS.values() if c in df.columns]
+    rest = sorted(c for c in df.columns if c not in BASE_COLS + ["source", "line"] + marks)
+    df = df[BASE_COLS + ["source", "line"] + marks + rest]
 
     df["t_s"] = df["t"] / 1000.0                       # node-local time in seconds
     for c in CATEGORICAL:
@@ -163,6 +169,17 @@ def build_frame(rows: list[dict]) -> pd.DataFrame:
 
     # keep per-node order (millis is monotonic per node; line order breaks ties)
     return df.sort_values(["node", "line"], kind="stable").reset_index(drop=True)
+
+
+def _add_mark_context(df: pd.DataFrame) -> pd.DataFrame:
+    """mark_run / mark_block / mark_cfg on every event: the last `mark` seen earlier in the same log."""
+    if "ev" not in df.columns or not (df["ev"] == "mark").any():
+        return df
+    is_mark = df["ev"] == "mark"
+    for src, dst in MARK_COLS.items():
+        col = df[src].where(is_mark) if src in df.columns else pd.Series(np.nan, index=df.index)
+        df[dst] = col.groupby(df["source"]).ffill()          # rows are still in per-file line order
+    return df
 
 
 # --------------------------------------------------------------------------- #
