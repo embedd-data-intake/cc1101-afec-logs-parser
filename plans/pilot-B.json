@@ -1,0 +1,51 @@
+{
+  "run_id": "pilot-B",
+  "condition": "B",
+  "seed": 102,
+  "blocks_per_config": 3,
+  "packets": 60,
+  "kw": 10,
+  "len": 32,
+  "interval": 2000,
+  "common": {
+    "init": 2,
+    "retries": 3,
+    "ackto": 400,
+    "tx": 0,
+    "dg": 2,
+    "nackstep": 2
+  },
+  "configs": {
+    "C2": {
+      "mode": 2
+    },
+    "C4": {
+      "mode": 4,
+      "rssi_min": -110,
+      "rssi_max": -50,
+      "rssi_up": "11,9,7,5,3",
+      "hys": 1
+    },
+    "C5": {
+      "mode": 5
+    }
+  },
+  "logs": {
+    "transport": "mqtt",
+    "uri": "mqtt://localhost:1883",
+    "commands": "mqtt"
+  },
+  "notes": {
+    "purpose": "P1 pilot, B (PLAN C3): confirm C2 PDR1 ~70-90 % with RSSI high; inputs for C4 calibration and the freeze",
+    "geometry": "Q geometry (sender/receiver on battery, untethered, DATA RSSI ~-48 dBm); interferer on USB, placed next to the receiver",
+    "interferer": "0 dBm, 10 ms bursts every 300 +/- 120 ms (3.3 % duty), seed=0 = fresh hardware-random seed per block (logged in burst_ok). Chosen 2026-11-27: C2 PDR1 0.775 in 2 x 40 packets (data/2026-11-27-1923-cal-B-tx0-p300). The first pilot at 200 +/- 80 ms with a fixed seed (data/2026-11-27-1902-pilot-B) gave C2 PDR1 0.59, below the 70-90 % target: superseded.",
+    "c4_policy": "placeholder defaults, calibrate in P2"
+  },
+  "interferer": {
+    "port": "/dev/cu.usbserial-210",
+    "setup": [
+      "burst len=10 period=300 jitter=120 tx=0 seed=0"
+    ],
+    "during_block": true
+  }
+}

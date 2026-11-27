@@ -142,7 +142,7 @@ A failed block is recorded (`status: failed`, `error`) and re-run under a fresh 
 
 Firmware: `../cc1101-afec-interferer` (`docs/firmware.md` there), serial only, also with an MQTT plan.
 
-- `setup` lines are sent **before every block**, while the interferer is off, and each must answer `burst_ok`. A reboot therefore can't leave it unconfigured, and with no `seed` each block gets a fresh one (logged in `burst_ok`).
+- `setup` lines are sent **before every block**, while the interferer is off, and each must answer `burst_ok`. A reboot therefore can't leave it unconfigured. Put `seed=0` in the setup line to get a fresh burst pattern per block (logged in `burst_ok`); a fixed seed repeats the same pattern in every block, and leaving `seed` out keeps the previous one.
 - `during_block` (B): `on` before `run` and `off` after it.
 - `steps` (S): each command is sent when the sender has logged `app_tx` for packet `idx + 1 ≥ step`, so the switch lands between two packets. Polling adds up to ~0.2 s of latency, which is far below the 2 s interval.
 - After the block the orchestrator always sends `off` (idempotent) and stores the `intf_off` counters in `blocks[].interferer`. With `steps` these are the counters since the step `on`, and `span_ms` runs to the end of the block, so `duty_permille` there is diluted; use `bursts` and `air_ms`.
