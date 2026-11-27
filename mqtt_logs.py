@@ -89,6 +89,14 @@ class MqttLogs:
         self.messages += 1
         self.on_line(rt[0], rt[1], m.payload.decode("utf-8", "replace").rstrip("\r\n"))
 
+    def publish(self, topic: str, payload: str) -> None:
+        """QoS 1 publish (commands to afec/cmd/<tx|rx>). While disconnected paho queues the message
+        and sends it after reconnecting (rc NO_CONN); any other error raises."""
+        import paho.mqtt.client as mqtt
+        info = self.c.publish(topic, payload, qos=1)
+        if info.rc not in (mqtt.MQTT_ERR_SUCCESS, mqtt.MQTT_ERR_NO_CONN):
+            raise RuntimeError(f"MQTT publish to {topic} failed (rc={info.rc})")
+
     def close(self) -> None:
         self.closing = True
         self.c.disconnect()

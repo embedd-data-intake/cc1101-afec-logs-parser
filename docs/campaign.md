@@ -19,6 +19,7 @@ Runs one campaign **phase** (one operating condition) from a JSON plan: all bloc
 | `--resume` | Continue `<data>/<run_id>`. The schedule must be identical (same plan and overrides). |
 | `--no-metrics` | Skip the final `metrics.py` call |
 | `--mqtt URI` | Read the logs from this MQTT broker instead of serial; overrides the plan's `logs` (see "Log transport") |
+| `--mqtt-commands` | With `--mqtt`: send the commands over MQTT too (untethered nodes, no serial ports) |
 
 ## Plan files (`plans/`)
 
@@ -69,7 +70,14 @@ With MQTT (`mqtt_logs.py`, paho-mqtt):
 - **meta.json** records `logs` in each session, the node's `sink` in `nodes`, `log_stats` (node counters `enq`, `dropped`, `pub`, …) and `mqtt` (`messages` received by the orchestrator, broker `disconnects`).
 - Broker credentials, if needed: `AFEC_MQTT_USER` / `AFEC_MQTT_PASS` in the environment, never in the plan.
 
-**Tested without hardware (2026-11-27)** against a local broker (`amqtt`) and fake nodes on ptys: a normal run, a `log_drop` → failed block → re-run, sink 3 (duplicates kept out of the logs), `--resume`, a serial-only firmware with an MQTT plan, and broker down. The serial transport was re-checked the same way. **Not yet tested on the real nodes.**
+**Untethered nodes** (`--mqtt URI --mqtt-commands`, or plan `logs.commands: "mqtt"`): commands go over MQTT too, so the nodes need no USB cable (useful for the M geometry, H2, and for energy measurements without the USB-serial circuit).
+- No serial port is opened for the sender and receiver, and plan `ports` may be left out. The interferer stays on serial.
+- Each command is published (QoS 1) to `afec/cmd/<tx|rx>` as `<cmd> id=<n>`, with an increasing id. The firmware logs `cmd_rx` and ignores a redelivered id (`cmd_dup`).
+- Nothing resets the boards, so the handshake sends `hello` at once.
+- **Reboots** are detected from the firmware's `boot` event. Because a rebooted node only reports it after rejoining WiFi, the orchestrator sends `hello` to both nodes after every block and waits for the reply. The `boot` comes first, so a reboot during the block is always charged to that block.
+- If WiFi or the broker drops, the block times out and is re-run (paho queues QoS 1 commands while disconnected).
+
+**Tested without hardware (2026-11-27)** against a local broker (`amqtt`) and fake nodes on ptys: a normal run, a `log_drop` → failed block → re-run, sink 3 (duplicates kept out of the logs), `--resume`, a serial-only firmware with an MQTT plan, and broker down. The serial transport was re-checked the same way. Untethered (fake nodes on MQTT only): a normal run, a reboot (`boot`) → that block failed and re-run, nodes off, and plans with missing ports or `commands: mqtt` without `--mqtt`. **Not yet tested on the real nodes.**
 
 ## What a run does
 
@@ -90,7 +98,7 @@ Block ids are assigned as the run goes (0, 1, 2, …) and are never reused, incl
 A block **fails** when:
 - a node logs `cmd_err`;
 - `cfg_ok` doesn't match the request;
-- a node reboots (a new `CC1101 ready` line);
+- a node reboots (a new `CC1101 ready` line, or untethered a `boot` event);
 - `run_start` or `cfg_ok` doesn't arrive in time;
 - (MQTT) a node logs `log_drop` during the block;
 - the block takes longer than `packets × max(interval, (1 + retries) × (ackto + 150 ms)) + 30 s`. The sender then gets `stop`.

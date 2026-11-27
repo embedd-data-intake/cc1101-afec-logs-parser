@@ -36,8 +36,8 @@ Plan file (JSON)
     metrics           optional extra metrics.py args, e.g. ["--steps", "0:Q,50:B,130:Q",
                                                           "--appropriate", "Q=0-1,B=3-5"]
     notes             free-form: geometry, distance, TX power rationale, environment
-    logs              optional: {"transport": "mqtt", "uri": "mqtt://192.168.1.10:1883"}
-                      (default serial; --mqtt URI sets it from the command line)
+    logs              optional: {"transport": "mqtt", "uri": "mqtt://192.168.1.10:1883", "commands": "mqtt"}
+                      (default serial; --mqtt URI and --mqtt-commands set it from the command line)
 
 Log transport
 -------------
@@ -47,6 +47,10 @@ topics afec/<run_id>/<tx|rx>/log (mqtt_logs.py); raw/<role>.log then holds the M
 plain-text serial lines (boot messages), so metrics.py reads it unchanged. JSON lines that still
 arrive on serial (sink 3) go to raw/<role>-serial.txt, which metrics.py ignores. A block fails if a
 node reports `log_drop` (its MQTT ring overflowed). Broker credentials: AFEC_MQTT_USER / AFEC_MQTT_PASS.
+
+With "commands": "mqtt" (--mqtt-commands) the nodes are untethered: no serial port is opened (plan
+`ports` may be left out), commands go to afec/cmd/<tx|rx> as "<cmd> id=<n>" (the firmware ignores a
+QoS 1 redelivery of an id it has seen), and reboots are detected from the firmware's `boot` event.
 """
 from __future__ import annotations
 
@@ -62,6 +66,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from typing import Callable
 
 from mqtt_logs import ROLE_NAMES, MqttLogs
 
@@ -81,19 +86,26 @@ class BlockFailed(Exception):
 # Serial node
 # --------------------------------------------------------------------------- #
 class Node:
-    """One serial port for commands. Log lines come from the same port (serial transport) or from the
-    broker through feed() (MQTT transport); either way they are teed to the raw log and parsed."""
+    """One node. Commands go over its serial port, or (untethered, `publish` given) to the broker as
+    "<cmd> id=<n>" on afec/cmd/<tx|rx>. Log lines come from the serial port (serial transport) or from
+    the broker through feed() (MQTT transport); either way they are teed to the raw log and parsed."""
 
-    def __init__(self, role: str, port: str, log_path: Path, append: bool, mqtt: bool = False):
-        import serial  # pyserial
-        self.role, self.port, self.mqtt = role, port, mqtt
+    def __init__(self, role: str, port: str | None, log_path: Path, append: bool, mqtt: bool = False,
+                 publish: Callable[[str], None] | None = None):
+        self.role, self.port, self.mqtt, self.publish = role, port, mqtt, publish
         self.side = (open(log_path.with_name(f"{role}-serial.txt"), "a" if append else "w", encoding="utf-8")
-                     if mqtt else None)       # serial JSON lines in MQTT mode (sink 3): kept, not parsed
+                     if mqtt and publish is None else None)   # serial JSON lines (sink 3): kept, not parsed
         self.events: list[dict] = []
-        self.boots = 0                       # "CC1101 ready" lines seen (each = a (re)boot)
+        self.boots = 0                       # reboots seen: "CC1101 ready" lines, or `boot` events if untethered
+        self.cmd_id = int(time.time() * 1000) & 0x7FFFFFFF   # MQTT command ids: increasing, unique per run
         self.lock = threading.Lock()
         self.stop = threading.Event()
         self.log = open(log_path, "a" if append else "w", encoding="utf-8")
+        self.ser = None
+        self.thread = None
+        if publish is not None:              # untethered: no serial port at all
+            return
+        import serial  # pyserial
         s = serial.Serial()
         s.port, s.baudrate, s.timeout = port, 115200, 0.2
         s.dtr = s.rts = False                 # don't hold the ESP32 in reset / bootloader
@@ -134,6 +146,8 @@ class Node:
             self.log.flush()
             if ev is not None:
                 self.events.append(ev)
+                if self.ser is None and ev.get("ev") == "boot":
+                    self.boots += 1
 
     def cursor(self) -> int:
         with self.lock:
@@ -142,8 +156,12 @@ class Node:
     def send(self, cmd: str) -> int:
         """Send one command line; returns the event cursor to wait from."""
         c = self.cursor()
-        self.ser.write((cmd + "\n").encode())
-        self.ser.flush()
+        if self.publish is not None:
+            self.cmd_id += 1
+            self.publish(f"{cmd} id={self.cmd_id}")
+        else:
+            self.ser.write((cmd + "\n").encode())
+            self.ser.flush()
         return c
 
     def wait(self, ev: str, cursor: int, timeout: float, boots: int | None = None, **match) -> dict:
@@ -165,8 +183,9 @@ class Node:
 
     def close(self) -> None:
         self.stop.set()
-        self.thread.join(timeout=1)
-        self.ser.close()
+        if self.ser is not None:
+            self.thread.join(timeout=1)
+            self.ser.close()
         with self.lock:
             self.log.close()
         if self.side:
@@ -182,7 +201,7 @@ class Node:
 # --------------------------------------------------------------------------- #
 def load_plan(path: Path, a: argparse.Namespace) -> dict:
     p = json.loads(path.read_text())
-    for k in ("run_id", "condition", "configs", "ports"):
+    for k in ("run_id", "condition", "configs"):     # ports: checked in log_transport (optional untethered)
         if k not in p:
             sys.exit(f"plan is missing '{k}'")
     p.setdefault("seed", 1)
@@ -321,6 +340,11 @@ def run_block(nodes: dict[str, Node], plan: dict, cfg: str, block: int, intf: di
             i.send("off")
     if end.get("aborted"):
         raise BlockFailed("sender: block aborted")
+    for role in ("sender", "receiver"):
+        n = nodes[role]
+        if n.ser is None:     # untethered: a reboot only shows once the node is back on WiFi. Its `boot`
+            c = n.send("hello")                       # precedes any later reply, so after this reply
+            n.wait("hello", c, 30, boots[role])       # a reboot during the block has been counted
     for role, n in nodes.items():                     # the receiver is never waited on during the run
         if drops := n.since(first[role], "log_drop"):
             raise BlockFailed(f"{role}: {sum(int(d.get('dropped', 0)) for d in drops)} log lines dropped (MQTT)")
@@ -329,16 +353,25 @@ def run_block(nodes: dict[str, Node], plan: dict, cfg: str, block: int, intf: di
 
 def log_transport(plan: dict) -> dict:
     lg = plan.get("logs") or {}
-    t = lg.get("transport", "serial")
+    t, cmds = lg.get("transport", "serial"), lg.get("commands", "serial")
     if t not in ("serial", "mqtt"):
         sys.exit(f"plan logs.transport must be serial or mqtt, not {t!r}")
+    if cmds not in ("serial", "mqtt"):
+        sys.exit(f"plan logs.commands must be serial or mqtt, not {cmds!r}")
     if t == "mqtt" and not lg.get("uri"):
         sys.exit("plan logs.transport is mqtt but logs.uri is missing (or pass --mqtt URI)")
-    return {"transport": t, **({"uri": lg["uri"]} if t == "mqtt" else {})}
+    if cmds == "mqtt" and t != "mqtt":
+        sys.exit("plan logs.commands is mqtt but logs.transport is not (use --mqtt URI --mqtt-commands)")
+    if cmds == "serial":
+        for role in ("sender", "receiver"):
+            if not (plan.get("ports") or {}).get(role):
+                sys.exit(f"plan ports.{role} is missing (needed unless commands go over MQTT)")
+    return {"transport": t, "commands": cmds, **({"uri": lg["uri"]} if t == "mqtt" else {})}
 
 
 def open_nodes(plan: dict, raw: Path, append: bool) -> tuple[dict[str, Node], MqttLogs | None]:
-    mqtt = log_transport(plan)["transport"] == "mqtt"
+    lt = log_transport(plan)
+    mqtt, untethered = lt["transport"] == "mqtt", lt["commands"] == "mqtt"
     nodes: dict[str, Node] = {}
     broker = None
     if mqtt:     # subscribe before opening the ports (which resets the boards), so boot lines are kept
@@ -348,7 +381,12 @@ def open_nodes(plan: dict, raw: Path, append: bool) -> tuple[dict[str, Node], Mq
                 n.feed(line)
         broker = MqttLogs(plan["logs"]["uri"], route, client_id=f"afec-campaign-{os.getpid()}")
     for role in ("sender", "receiver"):
-        nodes[role] = Node(role, plan["ports"][role], raw / f"{role}.log", append, mqtt)
+        pub = None
+        if untethered:              # commands to afec/cmd/<tx|rx>; no serial port is opened
+            topic = f"afec/cmd/{ 'tx' if role == 'sender' else 'rx' }"
+            pub = (lambda t: lambda line: broker.publish(t, line))(topic)
+        nodes[role] = Node(role, None if untethered else plan["ports"][role], raw / f"{role}.log",
+                           append, mqtt, pub)
     intf = plan.get("interferer")
     if intf and intf.get("port"):            # the interferer has no MQTT sink: always serial
         nodes["interferer"] = Node("interferer", intf["port"], raw / "interferer.log", append)
@@ -357,8 +395,10 @@ def open_nodes(plan: dict, raw: Path, append: bool) -> tuple[dict[str, Node], Mq
 
 def handshake(nodes: dict[str, Node], mqtt: bool) -> dict:
     """Opening a CP2102 port resets the ESP32: wait for the boot, then check roles with hello.
-    With MQTT the reply only comes once the node has joined WiFi and the broker, hence the longer wait."""
-    time.sleep(2.5)
+    With MQTT the reply only comes once the node has joined WiFi and the broker, hence the longer wait.
+    Untethered nodes (commands over MQTT) are not reset: hello is sent at once."""
+    if any(n.ser is not None for n in nodes.values()):
+        time.sleep(2.5)
     info = {}
     for role in ("sender", "receiver"):
         n = nodes[role]
@@ -367,6 +407,9 @@ def handshake(nodes: dict[str, Node], mqtt: bool) -> dict:
             h = n.wait("hello", c, 20 if mqtt else 5)
         except BlockFailed:
             via = "the MQTT broker" if mqtt else n.port
+            if n.ser is None:
+                sys.exit(f"{role}: no hello over MQTT (afec/cmd/{'tx' if role == 'sender' else 'rx'}). Is the "
+                         f"node powered, on WiFi, and built with AFEC_LOG_SINK=2/3 and AFEC_MQTT_COMMANDS=1?")
             sys.exit(f"{role}: no hello on {via}. Is the node built with the matching AFEC_LOG_SINK "
                      f"({'2/3, env:dev-mqtt' if mqtt else '1/3, env:dev'}), and (MQTT) are WiFi and broker reachable?")
         if h.get("role") != role:
@@ -374,7 +417,7 @@ def handshake(nodes: dict[str, Node], mqtt: bool) -> dict:
         sink = h.get("sink", "serial")       # firmware before the log sink had no field: serial
         if mqtt and "mqtt" not in sink:
             sys.exit(f"{role}: firmware log sink is {sink!r}, the plan wants mqtt")
-        info[role] = {"port": n.port, "node": h.get("node"), "build": h.get("build"), "sink": sink}
+        info[role] = {"port": n.port or "mqtt", "node": h.get("node"), "build": h.get("build"), "sink": sink}
     return info
 
 
@@ -407,16 +450,21 @@ def main() -> None:
     ap.add_argument("--resume", action="store_true", help="continue the run in <data>/<run_id>")
     ap.add_argument("--no-metrics", action="store_true")
     ap.add_argument("--mqtt", metavar="URI", help="read the logs from this MQTT broker (overrides plan logs)")
+    ap.add_argument("--mqtt-commands", action="store_true",
+                    help="also send the commands over MQTT (untethered nodes, no serial ports); needs --mqtt")
     a = ap.parse_args()
 
     plan = load_plan(a.plan, a)
     if a.mqtt:
-        plan["logs"] = {"transport": "mqtt", "uri": a.mqtt}
+        plan["logs"] = {**(plan.get("logs") or {}), "transport": "mqtt", "uri": a.mqtt}
+    if a.mqtt_commands:
+        plan["logs"] = {**(plan.get("logs") or {}), "commands": "mqtt"}
     logs = log_transport(plan)
     sched = schedule(plan)
     est_h = len(sched) * (plan["packets"] * plan["interval"] / 1000 + 10) / 3600
     print(f"[campaign] {plan['run_id']}: {len(sched)} blocks x {plan['packets']} packets, "
-          f"~{est_h:.1f} h of radio time, logs via {logs['transport']} {logs.get('uri', '')}", file=sys.stderr)
+          f"~{est_h:.1f} h of radio time, logs via {logs['transport']}, commands via {logs['commands']} "
+          f"{logs.get('uri', '')}", file=sys.stderr)
     if a.dry_run:
         for k, cfg in enumerate(sched):
             print(k, cfg, cfg_line(cfg_args(plan, cfg, "sender")), "|", cfg_line(cfg_args(plan, cfg, "receiver")))
