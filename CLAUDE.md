@@ -22,7 +22,7 @@ This is the host-side tooling for the AFEC thesis measurement campaign: the orch
 
 - **Python:** use `.venv` (Python 3.13). The system `python3` is 3.9 and too old. To recreate it: `uv venv --python 3.13 .venv && uv pip install -r requirements.txt`. Behind the TLS proxy, `uv` needs `--system-certs`.
 - **Ports on the bench Mac:** sender (node 2) is `/dev/cu.usbserial-5`, receiver (node 1) is `/dev/cu.usbserial-0001`. `campaign.py` checks them with `hello`. Opening a port resets the board.
-- **Output:** campaign data goes to `../data/<run_id>/`, which the parent repo currently ignores in git.
+- **Output:** campaign data goes to `../data/<run_id>/`, which is gitignored on purpose: the author persists campaign data outside git. Never commit it.
 
 ## Conventions
 

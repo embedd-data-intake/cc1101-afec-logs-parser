@@ -51,4 +51,4 @@ data/<run_id>/            e.g. 2026-11-30-Q, 2026-11-28-pilot-Q
   out/                    metrics.py output
 ```
 
-Note: the parent repo currently ignores `data/` in git. Run plan `07-run-plan.md` intends to commit campaign data; decide that before the main campaign.
+`data/` is gitignored in the parent repo **on purpose**: campaign data is not committed, and the author persists it outside git. Don't add it to git or suggest LFS.
